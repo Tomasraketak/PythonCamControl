@@ -1,0 +1,2 @@
+PyQt5>=5.12
+numpy>=1.20        # jen pro simulovaný (demo) režim – pro provoz s kamerou není nutné

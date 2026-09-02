@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+snimek_*.jpg
+video_*.mp4
+*.profil.json
+.DS_Store
