@@ -11,7 +11,8 @@ import sys
 import threading
 from typing import Dict, List, Optional, Tuple
 
-from ..spec import AF_FEEDBACK_TEXT, DeviceInfo, KIND_CHECK, KIND_READONLY, PropSpec, make_spec
+from ..spec import (AF_FEEDBACK_TEXT, DeviceInfo, KIND_CHECK, KIND_COMBO,
+                    KIND_READONLY, PropSpec, make_spec)
 from .base import (EVENT_DISCONNECT, EVENT_ERROR, EVENT_IMAGE, CameraBackend,
                    CameraError, Frame)
 
@@ -156,16 +157,21 @@ class UvchamBackend(CameraBackend):
 
     # ------------------------------------------------------------ vlastnosti -
     def _probe(self) -> None:
-        """Zjistí, které vlastnosti kamera skutečně podporuje."""
+        """Zjistí, které vlastnosti kamera skutečně podporuje.
+
+        Primárně se ptáme přes Uvcham_range(). Některé firmwary ale rozsah
+        u přepínačů a výčtů nehlásí – tam se spokojíme s tím, že jde hodnotu
+        přečíst, a rozsah odvodíme z katalogu.
+        """
         mod = _load()
         for key, const, over in _MAP:
             pid = getattr(mod, const, None)
             if pid is None:
                 continue
-            try:
-                nmin, nmax, ndef = self._cam.range(pid)
-            except Exception:
+            bounds = self._probe_range(pid, key)
+            if bounds is None:
                 continue                       # vlastnost není podporována
+            nmin, nmax, ndef = bounds
             if nmax <= nmin and key not in ("aexpo",):
                 nmin, nmax = 0, max(nmax, 1)
             spec = make_spec(key, nmin, nmax, ndef, **over)
@@ -173,6 +179,23 @@ class UvchamBackend(CameraBackend):
                 spec.minimum, spec.maximum = 0, 1
             self._props[key] = spec
             self._ids[key] = pid
+
+    def _probe_range(self, pid: int, key: str):
+        """Vrátí (min, max, default), nebo None, pokud kamera vlastnost nemá."""
+        try:
+            return self._cam.range(pid)
+        except Exception:
+            pass
+        spec = make_spec(key)                  # jen kvůli druhu prvku a popiskům
+        if spec.kind not in (KIND_CHECK, KIND_COMBO):
+            return None                        # u posuvníku bez rozsahu nemá smysl hádat
+        try:
+            current = self._cam.get(pid)
+        except Exception:
+            return None
+        if spec.kind == KIND_CHECK:
+            return (0, 1, current)
+        return (0, max(len(spec.items) - 1, 1), current)
 
         if "wbmode" in self._props:
             self._props["wb_once"] = make_spec("wb_once")

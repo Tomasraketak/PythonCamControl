@@ -35,9 +35,29 @@ Ovládací prvky se **sestavují podle toho, co konkrétní kus kamery hlásí**
 Co firmware nepodporuje, se v panelu vůbec neobjeví – program tedy funguje
 i s jinými modely postavenými na stejném SDK.
 
+## Požadavky a připojení kamery
+
+| | |
+|---|---|
+| Systém | Windows 7 a novější, 64bit (Windows 11 vyhovuje) |
+| Python | 3.8 – 3.12, 64bitový (32bitový funguje také, načte se `lib/x86`) |
+| Připojení kamery | **USB** – přiložené SDK ovládá kameru přes USB rozhraní |
+
+**Důležité k „multioutput“ kameře:** knihovna `uvcham.dll` vyhledává kameru
+podle USB identifikátorů (VID `0547`). Ovládání z této aplikace tedy funguje
+jen tehdy, je-li kamera připojená **USB kabelem** k počítači. Výstupy HDMI
+a RJ45 pracují samostatně (obraz do monitoru, resp. do sítě) a přes ně kameru
+z počítače ovládat nelze. Jestli kamera USB vidíte, ověříte příkazem:
+
+```bat
+python main.py --list
+```
+
+Vypíše nalezené kamery a stav SDK. Pokud se v seznamu objeví jen simulovaná
+kamera, není kamera připojená přes USB nebo chybí ovladač.
+
 ## Instalace (Windows – doporučeno)
 
-Potřebujete Python 3.8 nebo novější.
 
 ```bat
 git clone https://github.com/tomasraketak/PythonCamControl.git
