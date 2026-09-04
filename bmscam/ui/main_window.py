@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 from PyQt5.QtCore import QSettings, QSize, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QIcon, QImage, QKeySequence, QPixmap
 from PyQt5.QtWidgets import (QAction, QActionGroup, QApplication, QComboBox,
+                             QDockWidget,
                              QDialog, QDialogButtonBox, QDoubleSpinBox,
                              QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
                              QLabel, QMainWindow, QMessageBox, QPlainTextEdit,
@@ -22,6 +23,7 @@ from ..backends import (EVENT_DISCONNECT, EVENT_ERROR, EVENT_IMAGE,
 from ..spec import (GROUP_ORDER, GROUP_TITLES, GROUP_TOOLTIPS, KIND_ACTION,
                     KIND_READONLY, DeviceInfo, PropSpec)
 from .controls import PropertyPanel
+from .led_panel import LedPanel
 from .video_view import VideoView
 
 APP_NAME = "BMS Cam Control"
@@ -71,6 +73,9 @@ class MainWindow(QMainWindow):
 
         self.refreshDevices()
         self._updateEnabled()
+        geometry = self.settings.value("window_state")
+        if geometry is not None:
+            self.restoreState(geometry)
 
     # ================================================================= UI ====
     def _buildUi(self) -> None:
@@ -98,6 +103,22 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([420, 980])
         self.setCentralWidget(splitter)
+
+        self.led_dock = QDockWidget("Osvětlení (Arduino)", self)
+        self.led_dock.setObjectName("ledDock")
+        self.led_dock.setAllowedAreas(Qt.RightDockWidgetArea | Qt.LeftDockWidgetArea)
+        self.led_panel = LedPanel()
+        scroll_led = QScrollArea()
+        scroll_led.setWidgetResizable(True)
+        scroll_led.setFrameShape(QScrollArea.NoFrame)
+        scroll_led.setWidget(self.led_panel)
+        scroll_led.setMinimumWidth(430)
+        self.led_dock.setWidget(scroll_led)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.led_dock)
+        QTimer.singleShot(0, lambda: self.resizeDocks(
+            [self.led_dock], [450], Qt.Horizontal))
+        self.led_panel.logMessage.connect(
+            lambda text: self.status.showMessage(text, 3000))
 
         self.status = QStatusBar()
         self.setStatusBar(self.status)
@@ -218,6 +239,11 @@ class MainWindow(QMainWindow):
         self.act_roi = self._addAction(m_view, "Výběr oblasti pro &WB (ROI)", self._onRoiMode, None, True)
         self._addAction(m_view, "Zrušit výběr oblasti", self.view.clearRoi)
         m_view.addSeparator()
+        self.act_leds = self.led_dock.toggleViewAction()
+        self.act_leds.setText("Panel &osvětlení")
+        self.act_leds.setShortcut("Ctrl+L")
+        m_view.addAction(self.act_leds)
+        m_view.addSeparator()
         self.act_fullscreen = self._addAction(m_view, "Celá obrazovka", self._onFullscreen, "F11", True)
 
         m_help = bar.addMenu("&Nápověda")
@@ -225,6 +251,7 @@ class MainWindow(QMainWindow):
         self._addAction(m_help, "&O aplikaci…", self.showAbout)
 
         tb = QToolBar("Hlavní")
+        tb.setObjectName("mainToolBar")
         tb.setIconSize(QSize(16, 16))
         tb.setToolButtonStyle(Qt.ToolButtonTextOnly)
         self.addToolBar(tb)
@@ -241,6 +268,8 @@ class MainWindow(QMainWindow):
         tb.addAction(self.act_grid)
         tb.addAction(self.act_cross)
         tb.addAction(self.act_scale)
+        tb.addSeparator()
+        tb.addAction(self.act_leds)
         self.lbl_zoom = QLabel("  100 %  ")
         tb.addWidget(self.lbl_zoom)
 
@@ -795,6 +824,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         self.timelapse_timer.stop()
         self.ui_timer.stop()
+        self.settings.setValue("window_state", self.saveState())
+        self.led_panel.shutdown()
         self.disconnectCamera()
         super().closeEvent(event)
 

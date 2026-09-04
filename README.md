@@ -28,6 +28,10 @@ Podrobný soupis ovládacích prvků a jejich konstant v SDK je v [docs/prehled.
   v mikrometrech (*Zobrazení → Kalibrace měřítka*).
 * **Profily nastavení** – všechna nastavení kamery se dají uložit do JSON
   a později znovu načíst.
+* **Osvětlení** – řízení čtyř modulů FC101 (8× WS2812) uspořádaných do stran
+  čtverce kolem objektivu přes Arduino Mega: každá strana zvlášť (zapnutí, jas,
+  barva), všechny najednou, i šikmé osvětlení jednou stranou. Podrobnosti
+  a zapojení v [docs/zapojeni_led.md](docs/zapojeni_led.md).
 * **Simulovaný režim** – aplikaci lze celou vyzkoušet i bez připojené kamery
   (`python main.py --demo`).
 
@@ -100,9 +104,40 @@ python main.py --list     # vypíše nalezené kamery a stav SDK a skončí
 | `Ctrl+0` / `Ctrl+1` | přizpůsobit oknu / velikost 1:1 |
 | `Ctrl +` / `Ctrl -` | přiblížit / oddálit |
 | `G` / `K` / `M` | mřížka / nitkový kříž / měřítko |
+| `Ctrl+L` | zobrazit / skrýt panel osvětlení |
 | `F11` | celá obrazovka |
 
 Myš: kolečko = zoom, tažení = posun obrazu, dvojklik = přizpůsobit oknu.
+
+## Osvětlení WS2812 (Arduino)
+
+Čtyři moduly FC101 tvoří strany čtverce okolo objektivu. Do Arduina Mega se
+nahraje sketch `arduino/bms_led_controller/bms_led_controller.ino` (potřebuje
+knihovnu **FastLED**), deska se připojí USB kabelem a v aplikaci se ovládá
+panelem *Osvětlení (Arduino)* vpravo (`Ctrl+L`).
+
+Ovládací prvky jsou rozmístěné stejně jako moduly kolem objektivu, takže je
+hned vidět, která strana se ovládá. Kromě jasu a barvy každé strany zvlášť
+jsou k dispozici tlačítka pro šikmé osvětlení (*shora / zprava / zdola /
+zleva*), které zvýrazní reliéf vzorku.
+
+> **Napájení:** 32 LED odebírá při plné bílé až 1,9 A – moduly potřebují
+> samostatný zdroj 5 V / 3 A a společnou zem s Arduinem. Nikdy je nenapájejte
+> z pinu 5V na desce. Kompletní schéma zapojení, seznam součástek a popis
+> protokolu najdete v [docs/zapojeni_led.md](docs/zapojeni_led.md).
+
+## Když SDK kameru nenajde
+
+Kamera se hlásí i jako běžné UVC zařízení, takže aplikace umí obraz zobrazit
+i bez SDK výrobce – přes OpenCV. Stačí doinstalovat:
+
+```bat
+pip install opencv-python
+```
+
+V seznamu kamer se pak objeví položka *UVC kamera #0*. Je to **záložní režim**:
+obraz a základní veličiny fungují, ale ovladač nehlásí rozsahy hodnot, takže
+jsou jen orientační. Pro plné ovládání používejte backend `uvcham`.
 
 ## Linux
 
@@ -135,11 +170,18 @@ bmscam/
         uvcham_backend.py     kamera přes uvcham.dll (Windows)
         toupcam_backend.py    kamera přes libtoupcam (Linux / macOS)
         demo.py               simulovaná kamera
+    leds.py                   protokol osvětlení (bez závislosti na Qt)
+    serialio.py               sériová linka k Arduinu
+    backends/
+        uvc_opencv.py         záložní obraz přes OpenCV (UVC)
     ui/
         main_window.py        hlavní okno, menu, snímání, profily
         controls.py           ovládací prvky generované z popisu vlastností
         video_view.py         plocha s obrazem, zoom, překryvy, výběr ROI
+        led_panel.py          panel osvětlení (Arduino)
+arduino/bms_led_controller/   sketch pro Arduino Mega (FastLED)
 tests/test_smoke.py           testy bez hardwaru
+docs/zapojeni_led.md          zapojení osvětlení a popis protokolu
 docs/uvcham.h                 hlavičkový soubor SDK (reference)
 ```
 

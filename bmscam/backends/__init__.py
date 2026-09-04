@@ -7,10 +7,12 @@ from .base import (EVENT_DISCONNECT, EVENT_ERROR, EVENT_IMAGE, CameraBackend,
                    CameraError, Frame)
 from .demo import DemoBackend
 from .toupcam_backend import ToupcamBackend
+from .uvc_opencv import OpenCvBackend
 from .uvcham_backend import UvchamBackend
 
 #: pořadí = priorita při automatické volbě
-BACKENDS: List[Type[CameraBackend]] = [UvchamBackend, ToupcamBackend, DemoBackend]
+BACKENDS: List[Type[CameraBackend]] = [UvchamBackend, ToupcamBackend,
+                                      OpenCvBackend, DemoBackend]
 
 BY_NAME: Dict[str, Type[CameraBackend]] = {b.name: b for b in BACKENDS}
 
@@ -65,4 +67,5 @@ def diagnostics() -> List[str]:
 
 __all__ = ["BACKENDS", "BY_NAME", "CameraBackend", "CameraError", "Frame",
            "EVENT_IMAGE", "EVENT_DISCONNECT", "EVENT_ERROR", "DemoBackend",
+           "OpenCvBackend",
            "available_backends", "enumerate_devices", "open_device", "diagnostics"]
