@@ -30,8 +30,16 @@ Zdrojový návrh je v [docs/design](docs/design/).
   pozastavení snímání, aktuální snímková frekvence.
 * **Snímání** – uložení snímku (Ctrl+S), nahrávání videa do `.mp4` / `.mkv` /
   `.asf` přímo přes SDK a **časosběr** (automatické snímky v zadaném intervalu).
+  Každý časosběr si založí vlastní podsložku `casosber_RRRRMMDD_HHMMSS`
+  v pracovní složce a snímky v ní čísluje (`snimek_0001_…jpg`), takže se
+  jednotlivé série nemíchají dohromady. Po skončení nahrávání se soubor
+  automaticky zkontroluje a aplikace upozorní, když s ním něco není v pořádku.
 * **Měřicí překryvy** – mřížka třetin, nitkový kříž a kalibrovatelné měřítko
   v mikrometrech (*Zobrazení → Kalibrace měřítka*).
+* **Přesné hodnoty** – u každé veličiny je vedle posuvníku i vstupní pole.
+  Hodnotu jde napsat z klávesnice a potvrdit Enterem, nebo krokovat šipkami;
+  posuvník a pole se drží spolu. U expozičního času tak jde nastavit přesné
+  číslo, na které by se posuvníkem trefovalo těžko.
 * **Profily nastavení** – všechna nastavení kamery se dají uložit do JSON
   a znovu vyvolat z nabídky *Profil nastavení* v horní části levého panelu.
 * **Sbalitelné panely** – levý (kamera) i pravý (osvětlení) panel se dají
@@ -100,6 +108,7 @@ python main.py --demo     # simulovaná kamera, bez hardwaru
 python main.py --no-demo  # v seznamu nabídne jen skutečné kamery
 python main.py --list     # vypíše nalezené kamery a stav SDK a skončí
 python main.py --doctor   # diagnostika Qt, když nejde otevřít okno
+python main.py --check-video ZAZNAM.MP4   # proč nejde přehrát video
 ```
 
 ## Klávesové zkratky
@@ -171,6 +180,36 @@ Výpis ukáže, kde Qt hledá a jestli tam soubor `qwindows.dll` je. Podle toho:
 
 Podrobný výpis hledání zapnete přes `set QT_DEBUG_PLUGINS=1 && python main.py`.
 
+## Když nejde přehrát nahrané video
+
+Windows u vadného videa hlásí kód `0xC00D36C4`
+(`MF_E_UNSUPPORTED_BYTESTREAM_TYPE`) – *tomuhle souboru nerozumím*. Příčiny
+jsou dvě a je potřeba je rozlišit:
+
+1. **Soubor není dokončený.** Kontejner MP4 má na konci rejstřík (`moov`),
+   který se zapíše až při ukončení nahrávání. Když se zápis přeruší – dojde
+   místo na disku, zavře se aplikace, odpojí se kamera nebo se během
+   záznamu změní rozlišení – zůstanou v souboru jen data bez rejstříku
+   a žádný přehrávač je neotevře.
+2. **Soubor je v pořádku, jen ho neumí *tenhle* přehrávač.** Aplikace
+   „Filmy a TV“ zvládne prakticky jen H.264 a HEVC. Když SDK zapíše MJPEG
+   nebo MPEG-4 Part 2, Windows couvnou se stejným kódem – a VLC přitom
+   video přehraje bez problémů.
+
+Který případ nastal, řekne rozbor souboru:
+
+```bat
+python main.py --check-video C:\Users\...\video_20260904_144632.mp4
+```
+
+Totéž je v aplikaci pod **☰ → Zkontrolovat nahrané video…** a spouští se
+samo po každém ukončeném nahrávání.
+
+Aplikace proti prvnímu případu dělá tři věci: hlídá volné místo před
+spuštěním záznamu, nedovolí během nahrávání změnit rozlišení ani kodek
+(zastavení streamu by soubor přerušilo) a při zavření okna nebo odpojení
+kamery záznam nejdřív řádně ukončí.
+
 ## Když SDK kameru nenajde
 
 Kamera se hlásí i jako běžné UVC zařízení, takže aplikace umí obraz zobrazit
@@ -207,6 +246,7 @@ main.py                       spouštěč
 bmscam/
     app.py                    zpracování parametrů příkazové řádky
     qtenv.py                  nalezení knihoven Qt (řeší chybu qwindows.dll)
+    videocheck.py             rozbor nahraného videa (proč nejde přehrát)
     spec.py                   katalog vlastností kamery (popisky, rozsahy, skupiny)
     uvcham.py                 modul z originálního SDK (nezměněný)
     toupcam_ctypes.py         binding pro nativní SDK ToupTek

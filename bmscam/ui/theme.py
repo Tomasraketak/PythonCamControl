@@ -185,18 +185,18 @@ QComboBox QAbstractItemView {{
     background: {BG}; border: 1px solid {DIVIDER};
     selection-background-color: {ACCENT}; selection-color: {BG}; outline: none;
 }}
-QSpinBox[role="inline"], QDoubleSpinBox[role="inline"] {{
-    background: transparent; border: 1px solid transparent; font-weight: 800;
-    font-size: 12px; padding: 1px 2px;
+/* Pole s hodnotou vlastnosti: rámeček dává najevo, že se do něj dá psát. */
+QSpinBox[role="value"], QDoubleSpinBox[role="value"] {{
+    background: {BG}; border: 1px solid {DIVIDER}; font-weight: 800;
+    font-size: 12px; padding: 2px 2px 2px 4px; min-height: 20px;
 }}
-QSpinBox[role="inline"]:hover, QDoubleSpinBox[role="inline"]:hover {{
-    background: {SURFACE}; border-color: {DIVIDER};
+QSpinBox[role="value"]:hover, QDoubleSpinBox[role="value"]:hover {{
+    border-color: {NEUTRAL_900};
 }}
-QSpinBox[role="inline"]:focus, QDoubleSpinBox[role="inline"]:focus {{
-    background: {SURFACE}; border-color: {ACCENT};
+QSpinBox[role="value"]:focus, QDoubleSpinBox[role="value"]:focus {{
+    border-color: {ACCENT};
 }}
-QSpinBox::up-button, QSpinBox::down-button,
-QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{ width: 12px; border: none; }}
+/* Šipky číselníků kreslí styl Fusion sám – vlastní QSS je jen rozbíjí. */
 
 /* ------------------------------------------------------------ zaškrtávátka */
 QCheckBox {{ spacing: 8px; font-size: 13px; }}

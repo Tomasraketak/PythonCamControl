@@ -85,26 +85,38 @@ class PropRow(QWidget):
             lay.addWidget(self.button)
 
     def _makeSpin(self):
+        """Pole pro přímé zadání hodnoty.
+
+        Je to plnohodnotné vstupní pole s rámečkem a šipkami, ne jen
+        popisek – hodnotu jde napsat z klávesnice a potvrdit Enterem.
+        Posuvník vedle něj zůstává; obojí ukazuje totéž."""
         spec = self.spec
+        span = max(spec.maximum - spec.minimum, 1)
         if spec.decimals:
             spin = QDoubleSpinBox()
             spin.setDecimals(spec.decimals)
             spin.setRange(spec.minimum * spec.scale, spec.maximum * spec.scale)
-            spin.setSingleStep(max((spec.maximum - spec.minimum) * spec.scale / 100.0,
+            spin.setSingleStep(max(span * spec.scale / 100.0,
                                    10 ** -spec.decimals))
             spin.setValue(spec.default * spec.scale)
         else:
             spin = QSpinBox()
             spin.setRange(spec.minimum, spec.maximum)
+            # U širokých rozsahů (expoziční čas bývá ve statisících) by krok
+            # po jedné byl k ničemu – šipky pak posouvají o promile rozsahu.
+            spin.setSingleStep(max(1, span // 1000))
             spin.setValue(spec.default)
         if spec.unit:
             spin.setSuffix(" " + spec.unit)
-        spin.setProperty("role", "inline")
-        spin.setButtonSymbols(QSpinBox.NoButtons)
+        spin.setProperty("role", "value")
         spin.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         spin.setKeyboardTracking(False)
         spin.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
-        spin.setMinimumWidth(74)
+        spin.setMinimumWidth(104)
+        spin.setToolTip("Hodnotu můžete napsat přímo z klávesnice "
+                        "(potvrdí se Enterem) nebo krokovat šipkami.\n"
+                        f"Rozsah {spec.format(spec.minimum)} "
+                        f"až {spec.format(spec.maximum)}.")
         spin.valueChanged.connect(self._onSpin)
         return spin
 

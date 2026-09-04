@@ -450,6 +450,215 @@ def test_opencv_import_is_deferred():
     assert out.stdout.strip() == "False", out.stdout + out.stderr
 
 
+# ------------------------------------------------------- zadávání hodnot --
+
+def test_prop_row_accepts_typed_value():
+    """Hodnotu jde zadat číslem; posuvník i pole se drží spolu."""
+    from bmscam.spec import make_spec
+    from bmscam.ui.controls import PropRow
+
+    _app()
+    row = PropRow(make_spec("expotime", 100, 2000000, 20000,
+                            unit="", scale=1.0, decimals=0))
+    seen = []
+    row.valueChanged.connect(lambda key, val: seen.append((key, val)))
+    try:
+        assert row.spin.isEnabled() and not row.spin.isReadOnly()
+        assert (row.spin.minimum(), row.spin.maximum()) == (100, 2000000)
+        assert row.spin.singleStep() > 1        # krok po jedné by byl k ničemu
+
+        row.spin.setValue(123456)               # jako by uživatel číslo napsal
+        assert row.slider.value() == 123456
+        assert seen[-1] == ("expotime", 123456)
+
+        row.slider.setValue(777)                # a zpět: posuvník mění pole
+        assert row.spin.value() == 777
+    finally:
+        row.deleteLater()
+
+
+def test_prop_row_spin_respects_scale():
+    """Pole s desetinnými místy přepočítává na syrové jednotky SDK."""
+    from bmscam.spec import make_spec
+    from bmscam.ui.controls import PropRow
+
+    _app()
+    row = PropRow(make_spec("expotime", 100, 200000, 20000))   # µs -> ms
+    seen = []
+    row.valueChanged.connect(lambda key, val: seen.append(val))
+    try:
+        row.spin.setValue(50.0)                 # 50 ms
+        assert seen[-1] == 50000                # = 50 000 µs
+        assert row.slider.value() == 50000
+    finally:
+        row.deleteLater()
+
+
+# --------------------------------------------------------- kontrola videa --
+
+def _mp4(*boxes: bytes) -> bytes:
+    return b"".join(boxes)
+
+
+def _box(kind: bytes, payload: bytes = b"") -> bytes:
+    import struct
+    return struct.pack(">I", 8 + len(payload)) + kind + payload
+
+
+def test_videocheck_detects_unfinished_file(tmpdir=None):
+    """Soubor bez rejstříku moov = nedokončené nahrávání."""
+    import tempfile
+    from bmscam import videocheck
+
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as fh:
+        fh.write(_mp4(_box(b"ftyp", b"isom" + b"\x00" * 8),
+                      _box(b"mdat", b"\x00" * 8000)))
+        path = fh.name
+    try:
+        report = videocheck.inspect(path)
+        assert report.container == "MP4"
+        assert report.complete is False
+        assert "není dokončený" in report.verdict()
+    finally:
+        os.unlink(path)
+
+
+def test_videocheck_reports_codec():
+    """Dokončený soubor: pozná kodek a řekne, jestli ho Windows přehrají."""
+    import struct
+    import tempfile
+    from bmscam import videocheck
+
+    mvhd = _box(b"mvhd", b"\x00\x00\x00\x00" + struct.pack(">IIII", 0, 0, 1000, 5000))
+    stsd = _box(b"stsd", b"\x00\x00\x00\x00" + struct.pack(">I", 1)
+                + _box(b"mp4v", b"\x00" * 70))
+    moov = _box(b"moov", mvhd + _box(b"trak", _box(b"mdia", _box(
+        b"minf", _box(b"stbl", stsd)))))
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as fh:
+        fh.write(_mp4(_box(b"ftyp", b"isom" + b"\x00" * 8),
+                      _box(b"mdat", b"\x00" * 8000), moov))
+        path = fh.name
+    try:
+        report = videocheck.inspect(path)
+        assert report.complete is True
+        assert report.codec == "mp4v"
+        assert report.duration == 5.0
+        assert report.playable_in_windows is False
+        assert "VLC" in report.verdict()
+    finally:
+        os.unlink(path)
+
+
+def test_videocheck_handles_empty_and_missing():
+    import tempfile
+    from bmscam import videocheck
+
+    assert "neexistuje" in videocheck.inspect("/nic/takoveho.mp4").verdict()
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as fh:
+        path = fh.name
+    try:
+        assert "prázdný" in videocheck.inspect(path).verdict()
+    finally:
+        os.unlink(path)
+
+
+def test_video_suffix_is_enforced():
+    """Bez známé přípony by SDK nevědělo, jaký kontejner zapsat."""
+    from bmscam import videocheck
+    from bmscam.ui.main_window import MainWindow
+
+    assert videocheck.suffix_is_supported("a/b/zaznam.mp4")
+    assert videocheck.suffix_is_supported("ZAZNAM.MKV")
+    assert not videocheck.suffix_is_supported("zaznam.avi")
+    assert MainWindow._fixVideoSuffix("zaznam") == "zaznam.mp4"
+    assert MainWindow._fixVideoSuffix("zaznam.avi") == "zaznam.mp4"
+    assert MainWindow._fixVideoSuffix("zaznam.mkv") == "zaznam.mkv"
+
+
+def test_recording_blocks_stream_restart():
+    """Změna rozlišení během nahrávání by soubor nechala nedokončený."""
+    from bmscam.ui.main_window import MainWindow
+
+    from PyQt5.QtWidgets import QMessageBox
+
+    app = _app()
+    win = MainWindow(prefer_demo=True)
+    win.connectCamera()
+    shown = []
+    original_dialog = QMessageBox.information
+    QMessageBox.information = staticmethod(lambda *a, **k: shown.append(a[-1]))
+    try:
+        for _ in range(10):
+            app.processEvents()
+        assert win._allowStreamRestart("Rozlišení") is True
+        assert not shown
+        win._recording_since = 1.0             # jako by běželo nahrávání
+        assert win.isRecording()
+        blocked = []
+        win._fillResolutions = lambda: blocked.append(True)
+        original = win.camera.get_resolution()
+        assert win._allowStreamRestart("Rozlišení") is False
+        assert blocked                          # nabídka se vrátila zpět
+        assert win.camera.get_resolution() == original
+        assert shown and "nahrávání" in shown[0]
+        win._recording_since = None
+    finally:
+        QMessageBox.information = original_dialog
+        win.close()
+
+
+# ------------------------------------------------------------- časosběr ---
+
+def test_timelapse_uses_its_own_folder():
+    """Každý časosběr má vlastní podsložku a číslované snímky."""
+    import tempfile
+    from bmscam.ui.main_window import MainWindow
+
+    app = _app()
+    win = MainWindow(prefer_demo=True)
+    win.connectCamera()
+    workdir = tempfile.mkdtemp()
+    win.save_dir = workdir
+    try:
+        import time as _time
+        deadline = _time.time() + 5.0
+        while _time.time() < deadline and not win.view.hasImage():
+            app.processEvents()
+            _time.sleep(0.02)
+        assert win.view.hasImage(), "demo kamera nedodala obraz"
+
+        win.toggleTimelapse(True)
+        folder = win._timelapse_dir
+        assert folder and os.path.isdir(folder)
+        assert os.path.dirname(folder) == workdir
+        assert os.path.basename(folder).startswith("casosber_")
+
+        win._onTimelapse()
+        win._onTimelapse()
+        assert win._timelapse_count == 2
+        shots = sorted(os.listdir(folder))
+        assert len(shots) == 2
+        assert shots[0].startswith("snimek_0001_")
+        assert shots[1].startswith("snimek_0002_")
+
+        win.toggleTimelapse(False)
+        assert win._timelapse_dir is None
+        # běžný snímek jde dál do pracovní složky, ne do složky časosběru
+        path = win.snapshot(silent=True)
+        assert path and os.path.dirname(path) == workdir
+
+        # druhý časosběr dostane jinou složku a prázdný po sobě uklidí
+        win.toggleTimelapse(True)
+        second = win._timelapse_dir
+        assert second != folder
+        win.toggleTimelapse(False)
+        assert not os.path.exists(second)
+    finally:
+        win.close()
+        import shutil as _shutil
+        _shutil.rmtree(workdir, ignore_errors=True)
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

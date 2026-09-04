@@ -25,6 +25,8 @@ def parse_args(argv=None):
                     help="jen vypsat nalezené kamery a stav SDK a skončit")
     ap.add_argument("--doctor", action="store_true",
                     help="vypsat, kde Qt hledá své knihovny (při potížích se spuštěním)")
+    ap.add_argument("--check-video", metavar="SOUBOR",
+                    help="rozebrat nahrané video a říct, proč nejde přehrát")
     return ap.parse_args(argv)
 
 
@@ -35,6 +37,14 @@ def main(argv=None) -> int:
         print("Prostředí Qt:")
         for line in qtenv.report():
             print("  " + line)
+        return 0
+
+    if args.check_video:
+        from .videocheck import inspect
+        report = inspect(args.check_video)
+        for line in report.lines():
+            print("  " + line)
+        print("\n" + report.verdict())
         return 0
 
     if args.list:

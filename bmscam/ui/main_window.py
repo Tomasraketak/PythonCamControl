@@ -3,6 +3,7 @@
 import glob
 import json
 import os
+import shutil
 import time
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -19,6 +20,7 @@ from PyQt5.QtWidgets import (QAction, QComboBox, QDialog, QDialogButtonBox,
 from ..backends import (EVENT_DISCONNECT, EVENT_ERROR, EVENT_IMAGE,
                         CameraBackend, CameraError, diagnostics,
                         enumerate_devices, open_device)
+from .. import videocheck
 from ..spec import (GROUP_ORDER, GROUP_TITLES, GROUP_TOOLTIPS, KIND_ACTION,
                     KIND_READONLY, DeviceInfo, PropSpec)
 from . import theme
@@ -56,7 +58,9 @@ class MainWindow(QMainWindow):
         self._fps = 0.0
         self._fps_since = time.time()
         self._recording_since: Optional[float] = None
+        self._record_path: Optional[str] = None
         self._timelapse_count = 0
+        self._timelapse_dir: Optional[str] = None
 
         self.save_dir = self.settings.value(
             "save_dir", os.path.join(os.path.expanduser("~"), "BMSCam"))
@@ -116,6 +120,7 @@ class MainWindow(QMainWindow):
         self.act_profile_load = act("Načíst profil nastavení…", self.loadProfile)
         self.act_dir = act("Složka pro ukládání…", self.chooseSaveDir)
         self.act_diag = act("Diagnostika SDK…", self.showDiagnostics)
+        self.act_checkvideo = act("Zkontrolovat nahrané video…", self.checkVideo)
         self.act_shortcuts = act("Klávesové zkratky…", self.showShortcuts, "F1")
         self.act_about = act("O aplikaci…", self.showAbout)
         self.act_quit = act("Konec", self.close, "Ctrl+Q")
@@ -201,7 +206,8 @@ class MainWindow(QMainWindow):
 
     def _buildMenu(self) -> QMenu:
         menu = QMenu(self)
-        for action in (self.act_snap, self.act_record, self.act_dir):
+        for action in (self.act_snap, self.act_record, self.act_checkvideo,
+                       self.act_dir):
             menu.addAction(action)
         menu.addSeparator()
         for action in (self.act_profile_save, self.act_profile_load):
@@ -427,6 +433,10 @@ class MainWindow(QMainWindow):
     def disconnectCamera(self) -> None:
         if self.btn_timelapse.isChecked():
             self.btn_timelapse.setChecked(False)
+        # Záznam musí skončit dřív, než se zavře kamera – jinak zůstane
+        # soubor bez rejstříku a nepůjde přehrát.
+        if self.isRecording():
+            self.stopRecording(verify=False)
         if self.camera is not None:
             try:
                 self.camera.close()
@@ -631,6 +641,8 @@ class MainWindow(QMainWindow):
     def _onResolutionChanged(self, index: int) -> None:
         if self.camera is None or index < 0:
             return
+        if not self._allowStreamRestart("Rozlišení"):
+            return
         was_running = self.camera.is_running()
         try:
             if was_running:
@@ -647,6 +659,8 @@ class MainWindow(QMainWindow):
 
     def _onCodecChanged(self, index: int) -> None:
         if self.camera is None or index < 0 or not self.camera.codecs():
+            return
+        if not self._allowStreamRestart("Kodek"):
             return
         was_running = self.camera.is_running()
         try:
@@ -667,32 +681,46 @@ class MainWindow(QMainWindow):
     def _stamp() -> str:
         return datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    def snapshot(self, silent: bool = False) -> Optional[str]:
+    def snapshot(self, silent: bool = False, directory: Optional[str] = None,
+                 name: Optional[str] = None) -> Optional[str]:
+        """Uloží snímek; ve výchozím stavu do pracovní složky."""
         if not self.view.hasImage():
             if not silent:
                 QMessageBox.information(self, APP_NAME, "Není k dispozici žádný obraz.")
             return None
         image = self.view.image().copy()
-        path = os.path.join(self._ensureDir(), f"snimek_{self._stamp()}.jpg")
+        folder = directory or self._ensureDir()
+        path = os.path.join(folder, name or f"snimek_{self._stamp()}.jpg")
         if image.save(path, quality=95):
-            self.statusMessage(f"Uloženo: {os.path.basename(path)}")
+            if directory is None:
+                self.statusMessage(f"Uloženo: {os.path.basename(path)}")
             return path
         if not silent:
             QMessageBox.warning(self, APP_NAME, f"Snímek se nepodařilo uložit:\n{path}")
         return None
 
+    def isRecording(self) -> bool:
+        return self._recording_since is not None
+
+    def _allowStreamRestart(self, what: str) -> bool:
+        """Během nahrávání nesmí dojít k zastavení streamu.
+
+        Zastavení by SDK přerušilo zápis a soubor by zůstal nedokončený –
+        bez rejstříku, tedy nepřehratelný."""
+        if not self.isRecording():
+            return True
+        QMessageBox.information(
+            self, APP_NAME,
+            f"{what} nelze měnit během nahrávání – záznam by zůstal "
+            "nedokončený a nešel by přehrát.\n\nNejdřív zastavte nahrávání.")
+        self._fillResolutions()
+        return False
+
     def toggleRecord(self) -> None:
         if self.camera is None:
             return
-        if self._recording_since is not None:
-            try:
-                self.camera.record_stop()
-            except Exception as exc:
-                QMessageBox.warning(self, APP_NAME, str(exc))
-            self._recording_since = None
-            self.btn_record.setText("Nahrát video")
-            self.view.set_recording(None)
-            self.statusMessage("Nahrávání ukončeno", 3000)
+        if self.isRecording():
+            self.stopRecording()
             return
         if not self.camera.supports_record:
             QMessageBox.information(
@@ -705,29 +733,142 @@ class MainWindow(QMainWindow):
                                               path, VIDEO_FILTER)
         if not path:
             return
+        path = self._fixVideoSuffix(path)
+        if not self._enoughFreeSpace(os.path.dirname(path) or ".", 1000):
+            return
         try:
             self.camera.record_start(path)
         except Exception as exc:
             QMessageBox.warning(self, APP_NAME,
                                 f"Nahrávání se nepodařilo spustit:\n{exc}")
             return
+        self._record_path = path
         self._recording_since = time.time()
         self.btn_record.setText("Zastavit nahrávání")
+
+    def _enoughFreeSpace(self, folder: str, need_mb: int) -> bool:
+        """Varuje, když na disku dochází místo.
+
+        Zaplněný disk je nejtišší způsob, jak přijít o záznam: zápis se
+        zastaví uprostřed, rejstřík se nedopíše a soubor nejde přehrát."""
+        try:
+            free_mb = shutil.disk_usage(folder).free / 1e6
+        except OSError:
+            return True
+        if free_mb >= need_mb:
+            return True
+        answer = QMessageBox.question(
+            self, APP_NAME,
+            f"Na disku zbývá jen {free_mb:.0f} MB.\n\n"
+            "Když místo dojde uprostřed nahrávání, soubor zůstane "
+            "nedokončený a nepůjde přehrát. Pokračovat?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        return answer == QMessageBox.Yes
+
+    @staticmethod
+    def _fixVideoSuffix(path: str) -> str:
+        """SDK pozná kontejner jen podle přípony – vynutí ji.
+
+        Bez známé přípony se zapíše soubor, který pak neotevře žádný
+        přehrávač."""
+        if videocheck.suffix_is_supported(path):
+            return path
+        base = os.path.splitext(path)[0] if os.path.splitext(path)[1] else path
+        return base + ".mp4"
+
+    def stopRecording(self, verify: bool = True) -> None:
+        """Ukončí záznam a ověří, že vznikl použitelný soubor."""
+        if not self.isRecording():
+            return
+        path, self._record_path = self._record_path, None
+        self._recording_since = None
+        self.btn_record.setText("Nahrát video")
+        self.view.set_recording(None)
+        try:
+            self.camera.record_stop()
+        except Exception as exc:
+            QMessageBox.warning(self, APP_NAME,
+                                f"Nahrávání se nepodařilo ukončit:\n{exc}")
+            return
+        if not verify or not path:
+            self.statusMessage("Nahrávání ukončeno", 3000)
+            return
+        report = videocheck.inspect(path)
+        if report.problem or report.complete is False or \
+                report.playable_in_windows is False:
+            self._showVideoReport(report)
+        else:
+            self.statusMessage(
+                "Uloženo: {} ({:.1f} MB)".format(os.path.basename(path),
+                                                 report.size / 1e6), 6000)
+
+    def _showVideoReport(self, report: "videocheck.VideoReport") -> None:
+        box = QMessageBox(self)
+        box.setWindowTitle(APP_NAME)
+        broken = bool(report.problem) or report.complete is False
+        box.setIcon(QMessageBox.Warning if broken else QMessageBox.Information)
+        box.setText(os.path.basename(report.path))
+        box.setInformativeText(report.verdict())
+        box.setDetailedText("\n".join(report.lines()))
+        box.exec_()
+
+    def checkVideo(self) -> None:
+        """Rozbor libovolného nahraného souboru (nabídka ☰)."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Zkontrolovat video", self.save_dir,
+            "Video (*.mp4 *.mkv *.asf);;Všechny soubory (*)")
+        if path:
+            self._showVideoReport(videocheck.inspect(path))
 
     def toggleTimelapse(self, on: bool) -> None:
         if on:
             self.settings.setValue("timelapse_interval", self.spin_interval.value())
             self._timelapse_count = 0
+            try:
+                self._timelapse_dir = self._makeTimelapseDir()
+            except OSError as exc:
+                self.btn_timelapse.setChecked(False)
+                QMessageBox.warning(self, APP_NAME,
+                                    f"Složku pro časosběr nelze vytvořit:\n{exc}")
+                return
             self.timelapse_timer.start(self.spin_interval.value() * 1000)
             self.btn_timelapse.setText("Zastavit časosběr")
+            self.statusMessage("Časosběr ukládá do složky "
+                               + os.path.basename(self._timelapse_dir), 6000)
         else:
             self.timelapse_timer.stop()
             self.btn_timelapse.setText("Časosběr")
+            folder, self._timelapse_dir = self._timelapse_dir, None
+            if folder is not None:
+                if self._timelapse_count:
+                    self.statusMessage(
+                        f"Časosběr ukončen: {self._timelapse_count} snímků ve složce "
+                        + os.path.basename(folder), 8000)
+                else:
+                    # prázdnou složku po sobě neuklízíme jen tak – jen když
+                    # do ní opravdu nic nespadlo
+                    try:
+                        os.rmdir(folder)
+                    except OSError:
+                        pass
+
+    def _makeTimelapseDir(self) -> str:
+        """Každý časosběr dostane vlastní podsložku, ať se snímky nemíchají."""
+        base = os.path.join(self._ensureDir(), f"casosber_{self._stamp()}")
+        folder, index = base, 2
+        while os.path.exists(folder):        # dvakrát ve stejné vteřině
+            folder = f"{base}_{index}"
+            index += 1
+        os.makedirs(folder)
+        return folder
 
     def _onTimelapse(self) -> None:
-        if self.snapshot(silent=True):
+        name = f"snimek_{self._timelapse_count + 1:04d}_{self._stamp()}.jpg"
+        if self.snapshot(silent=True, directory=self._timelapse_dir, name=name):
             self._timelapse_count += 1
-            self.statusMessage(f"Časosběr: uloženo {self._timelapse_count} snímků", 3000)
+            self.statusMessage(f"Časosběr: uloženo {self._timelapse_count} snímků "
+                               "do " + os.path.basename(self._timelapse_dir or ""),
+                               3000)
 
     def chooseSaveDir(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Složka pro ukládání",
