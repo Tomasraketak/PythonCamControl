@@ -1,9 +1,13 @@
 """Zobrazovací plocha živého obrazu: zoom, posun, překryvy a výběr ROI."""
 
+from typing import Dict, Optional
+
 from PyQt5.QtCore import QPoint, QPointF, QRect, QRectF, Qt, pyqtSignal
 from PyQt5.QtGui import (QColor, QFont, QImage, QPainter, QPalette, QPen,
                          QPixmap)
 from PyQt5.QtWidgets import QSizePolicy, QWidget
+
+from . import theme
 
 
 class VideoView(QWidget):
@@ -20,9 +24,8 @@ class VideoView(QWidget):
         self.setMinimumSize(320, 240)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setAutoFillBackground(True)
-        pal = self.palette()
-        pal.setColor(QPalette.Window, QColor(24, 24, 26))
-        self.setPalette(pal)
+        self._light_stage = False
+        self._apply_stage()
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
 
@@ -42,6 +45,33 @@ class VideoView(QWidget):
         self._roi = QRect()
         self._roi_drag = None
         self._cursor_pos = None
+
+        self._stats: Dict[str, str] = {}
+        self._recording: Optional[int] = None
+
+    # -------------------------------------------------------- plocha náhledu
+    def _apply_stage(self) -> None:
+        palette = self.palette()
+        palette.setColor(QPalette.Window,
+                         QColor(theme.STAGE_LIGHT if self._light_stage
+                                else theme.STAGE_DARK))
+        self.setPalette(palette)
+
+    def set_light_stage(self, light: bool) -> None:
+        """Přepne pozadí náhledu mezi tmavým a světlým."""
+        self._light_stage = bool(light)
+        self._apply_stage()
+        self.update()
+
+    def set_stats(self, stats: Dict[str, str]) -> None:
+        """Údaje zobrazené v proužku přes obraz (EXP / GAIN / WB)."""
+        self._stats = dict(stats)
+        self.update()
+
+    def set_recording(self, seconds: Optional[int]) -> None:
+        """Nastaví ukazatel nahrávání; None jej skryje."""
+        self._recording = seconds
+        self.update()
 
     # -------------------------------------------------------------- vstup ---
     def setImage(self, image: QImage) -> None:
@@ -108,10 +138,8 @@ class VideoView(QWidget):
         p = QPainter(self)
         p.fillRect(self.rect(), self.palette().window())
         if self._image.isNull():
-            p.setPen(QColor(150, 150, 155))
-            f = QFont(); f.setPointSize(11); p.setFont(f)
-            p.drawText(self.rect(), Qt.AlignCenter,
-                       "Žádný obraz\n\nPřipojte kameru a stiskněte „Připojit“ (F5).")
+            self._drawEmpty(p)
+            self._drawPills(p)
             return
 
         rect = self._targetRect()
@@ -128,6 +156,57 @@ class VideoView(QWidget):
             self._drawScaleBar(p)
         if self._cursor_pos is not None:
             self._drawReadout(p)
+        self._drawPills(p)
+
+    def _drawEmpty(self, p: QPainter) -> None:
+        """Stav bez obrazu – ikona kamery s vysvětlením."""
+        color = QColor(theme.NEUTRAL_600 if self._light_stage else theme.NEUTRAL_500)
+        center = self.rect().center()
+        pixmap = theme.icon("camera", color.name(), 40).pixmap(40, 40)
+        p.drawPixmap(center.x() - 20, center.y() - 62, pixmap)
+
+        p.setPen(color)
+        font = theme.heading_font(21)
+        p.setFont(font)
+        p.drawText(QRect(0, center.y() - 14, self.width(), 30),
+                   Qt.AlignHCenter | Qt.AlignTop, "Žádný obraz")
+
+        font = QFont(font)
+        font.setPixelSize(13)
+        font.setWeight(50)
+        p.setFont(font)
+        p.drawText(QRect(center.x() - 220, center.y() + 20, 440, 44),
+                   Qt.AlignHCenter | Qt.AlignTop | Qt.TextWordWrap,
+                   "Připojte kameru a stiskněte „Připojit kameru“, "
+                   "nebo klávesu F5.")
+
+    def _drawPills(self, p: QPainter) -> None:
+        """Proužek s údaji vlevo nahoře a ukazatel nahrávání vpravo."""
+        margin = theme.SPACE_3
+        p.setFont(QFont(theme.heading_font(12)))
+        if self._stats:
+            text = "   ".join(f"{k} {v}" for k, v in self._stats.items())
+            width = p.fontMetrics().horizontalAdvance(text) + 28
+            rect = QRect(margin, margin, width, 28)
+            if self._light_stage:
+                p.fillRect(rect, QColor(255, 255, 255, 190))
+                p.setPen(QColor(theme.TEXT))
+            else:
+                p.fillRect(rect, QColor(0, 0, 0, 140))
+                p.setPen(Qt.white)
+            p.drawText(rect, Qt.AlignCenter, text)
+
+        if self._recording is not None:
+            text = f"REC {self._recording // 60:02d}:{self._recording % 60:02d}"
+            width = p.fontMetrics().horizontalAdvance(text) + 40
+            rect = QRect(self.width() - margin - width, margin, width, 28)
+            p.fillRect(rect, QColor(theme.ACCENT))
+            p.setBrush(Qt.white)
+            p.setPen(Qt.NoPen)
+            p.drawEllipse(rect.left() + 12, rect.center().y() - 4, 8, 8)
+            p.setBrush(Qt.NoBrush)
+            p.setPen(Qt.white)
+            p.drawText(rect.adjusted(26, 0, -6, 0), Qt.AlignCenter, text)
 
     def _drawGrid(self, p: QPainter, rect: QRectF) -> None:
         for pen in (QPen(QColor(0, 0, 0, 90), 3), QPen(QColor(255, 255, 255, 170), 1, Qt.DashLine)):
@@ -235,6 +314,11 @@ class VideoView(QWidget):
         steps = ev.angleDelta().y() / 120.0
         if steps:
             self.zoomBy(1.15 ** steps)
+
+    def resizeEvent(self, ev) -> None:
+        super().resizeEvent(ev)
+        if self._fit:                       # v režimu „Fit" se měřítko mění s oknem
+            self.zoomChanged.emit(self.currentScale())
 
     def clearRoi(self) -> None:
         self._roi = QRect()

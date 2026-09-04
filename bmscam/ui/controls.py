@@ -1,15 +1,16 @@
-"""Obecné ovládací prvky sestavované automaticky podle PropSpec."""
+"""Ovládací prvky vlastností kamery, sestavované automaticky z PropSpec."""
 
-from typing import Callable, Dict, Iterable, Optional
+from typing import Dict, Iterable
 
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout,
-                             QGridLayout, QHBoxLayout, QLabel, QPushButton,
-                             QSizePolicy, QSlider, QSpinBox, QToolButton,
-                             QVBoxLayout, QWidget)
+from PyQt5.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QHBoxLayout,
+                             QLabel, QPushButton, QSizePolicy, QSlider,
+                             QSpinBox, QVBoxLayout, QWidget)
 
 from ..spec import (AF_FEEDBACK_TEXT, KIND_ACTION, KIND_CHECK, KIND_COMBO,
                     KIND_READONLY, KIND_SLIDER, PropSpec)
+from . import theme
+from .widgets import button, label
 
 
 class PropRow(QWidget):
@@ -30,22 +31,23 @@ class PropRow(QWidget):
     def _build(self) -> None:
         spec = self.spec
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 2, 0, 2)
+        lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(2)
 
         if spec.kind == KIND_SLIDER:
             head = QHBoxLayout()
+            head.setContentsMargins(0, 0, 0, 0)
             head.addWidget(QLabel(spec.label))
             head.addStretch(1)
             self.spin = self._makeSpin()
             head.addWidget(self.spin)
-            self.reset = QToolButton()
-            self.reset.setText("⟲")
-            self.reset.setToolTip(f"Zpět na výchozí ({spec.format(spec.default)})")
-            self.reset.setAutoRaise(True)
+            self.reset = button("", "ghost", "refresh",
+                                f"Zpět na výchozí ({spec.format(spec.default)})")
+            self.reset.setFixedSize(24, 22)
             self.reset.clicked.connect(lambda: self.setValue(spec.default, emit=True))
             head.addWidget(self.reset)
             lay.addLayout(head)
+
             self.slider = QSlider(Qt.Horizontal)
             self.slider.setRange(spec.minimum, spec.maximum)
             self.slider.setValue(spec.default)
@@ -54,34 +56,32 @@ class PropRow(QWidget):
 
         elif spec.kind == KIND_CHECK:
             self.check = QCheckBox(spec.label)
-            self.check.toggled.connect(
-                lambda on: self._emit(1 if on else 0))
+            self.check.toggled.connect(lambda on: self._emit(1 if on else 0))
             lay.addWidget(self.check)
 
         elif spec.kind == KIND_COMBO:
-            head = QHBoxLayout()
-            head.addWidget(QLabel(spec.label))
-            head.addStretch(1)
+            lay.addWidget(label(spec.label, "field"))
             self.combo = QComboBox()
-            items = list(spec.items) or [str(i) for i in range(spec.minimum, spec.maximum + 1)]
+            items = list(spec.items) or [str(i) for i in
+                                         range(spec.minimum, spec.maximum + 1)]
             self.combo.addItems(items[: spec.maximum - spec.minimum + 1] or items)
             self.combo.currentIndexChanged.connect(
                 lambda i: self._emit(spec.minimum + i))
-            head.addWidget(self.combo)
-            lay.addLayout(head)
+            lay.addWidget(self.combo)
 
         elif spec.kind == KIND_READONLY:
             head = QHBoxLayout()
+            head.setContentsMargins(0, 0, 0, 0)
             head.addWidget(QLabel(spec.label))
             head.addStretch(1)
-            self.value_label = QLabel("–")
-            self.value_label.setStyleSheet("font-weight: 600;")
+            self.value_label = label("–", "value")
             head.addWidget(self.value_label)
             lay.addLayout(head)
 
         elif spec.kind == KIND_ACTION:
-            self.button = QPushButton(spec.label)
-            self.button.clicked.connect(lambda: self.actionTriggered.emit(self.spec.key))
+            self.button = button(spec.label, "secondary", "aperture")
+            self.button.clicked.connect(
+                lambda: self.actionTriggered.emit(self.spec.key))
             lay.addWidget(self.button)
 
     def _makeSpin(self):
@@ -90,7 +90,8 @@ class PropRow(QWidget):
             spin = QDoubleSpinBox()
             spin.setDecimals(spec.decimals)
             spin.setRange(spec.minimum * spec.scale, spec.maximum * spec.scale)
-            spin.setSingleStep(max((spec.maximum - spec.minimum) * spec.scale / 100.0, 10 ** -spec.decimals))
+            spin.setSingleStep(max((spec.maximum - spec.minimum) * spec.scale / 100.0,
+                                   10 ** -spec.decimals))
             spin.setValue(spec.default * spec.scale)
         else:
             spin = QSpinBox()
@@ -98,8 +99,12 @@ class PropRow(QWidget):
             spin.setValue(spec.default)
         if spec.unit:
             spin.setSuffix(" " + spec.unit)
+        spin.setProperty("role", "inline")
+        spin.setButtonSymbols(QSpinBox.NoButtons)
+        spin.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         spin.setKeyboardTracking(False)
-        spin.setMinimumWidth(96)
+        spin.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        spin.setMinimumWidth(74)
         spin.valueChanged.connect(self._onSpin)
         return spin
 
@@ -168,9 +173,9 @@ class PropRow(QWidget):
 
     def setControlEnabled(self, on: bool) -> None:
         for name in ("slider", "spin", "check", "combo", "button", "reset"):
-            w = getattr(self, name, None)
-            if w is not None:
-                w.setEnabled(on)
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.setEnabled(on)
 
 
 class PropertyPanel(QWidget):
@@ -183,8 +188,8 @@ class PropertyPanel(QWidget):
         super().__init__(parent)
         self.rows: Dict[str, PropRow] = {}
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(6, 4, 6, 4)
-        lay.setSpacing(4)
+        lay.setContentsMargins(0, theme.SPACE_1, 0, theme.SPACE_1)
+        lay.setSpacing(theme.SPACE_3)
         for spec in specs:
             row = PropRow(spec)
             row.valueChanged.connect(self.valueChanged)

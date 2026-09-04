@@ -6,10 +6,16 @@ originálním SDK `uvcham` (verze 1.29030.20250722).
 
 Podrobný soupis ovládacích prvků a jejich konstant v SDK je v [docs/prehled.md](docs/prehled.md).
 
+Rozhraní vychází z návrhového systému **Modernist** – ostré tvary bez zaoblení,
+červený akcent, sbalitelné boční panely a široká plocha pro živý obraz.
+Zdrojový návrh je v [docs/design](docs/design/).
+
 ## Co program umí
 
-* **Živý náhled** s plynulým zoomem (kolečko myši), posunem tažením,
-  režimy *Přizpůsobit oknu* / *1:1* a odečtem polohy a barvy pixelu pod kurzorem.
+* **Živý náhled** přes celý střed okna, s plynulým zoomem (kolečko myši),
+  posunem tažením, režimy *Fit* / *1:1*, odečtem polohy a barvy pixelu pod
+  kurzorem, proužkem s aktuální expozicí a ukazatelem nahrávání. Pozadí náhledu
+  jde přepnout mezi tmavým a světlým.
 * **Expozice** – automatika, expoziční čas, zisk, cílový jas AE, potlačení
   blikání osvětlení (50 / 60 Hz / DC).
 * **Vyvážení bílé** – ruční / automatické / podle vybrané oblasti, jednorázové
@@ -27,7 +33,9 @@ Podrobný soupis ovládacích prvků a jejich konstant v SDK je v [docs/prehled.
 * **Měřicí překryvy** – mřížka třetin, nitkový kříž a kalibrovatelné měřítko
   v mikrometrech (*Zobrazení → Kalibrace měřítka*).
 * **Profily nastavení** – všechna nastavení kamery se dají uložit do JSON
-  a později znovu načíst.
+  a znovu vyvolat z nabídky *Profil nastavení* v horní části levého panelu.
+* **Sbalitelné panely** – levý (kamera) i pravý (osvětlení) panel se dají
+  sbalit tlačítkem se šipkou a uvolnit tak celé okno pro obraz.
 * **Osvětlení** – řízení čtyř modulů FC101 (8× WS2812) uspořádaných do stran
   čtverce kolem objektivu přes Arduino Mega: každá strana zvlášť (zapnutí, jas,
   barva), všechny najednou, i šikmé osvětlení jednou stranou. Podrobnosti
@@ -95,8 +103,12 @@ python main.py --list     # vypíše nalezené kamery a stav SDK a skončí
 
 ## Klávesové zkratky
 
+Ovládání je bez klasické nabídky – všechny příkazy jsou pod tlačítkem **☰**
+vpravo nahoře, přehled zkratek pod **?** (nebo `F1`).
+
 | Zkratka | Akce |
 |---|---|
+| `F1` | přehled klávesových zkratek |
 | `F5` / `F6` | připojit–odpojit / znovu vyhledat kamery |
 | `Ctrl+S` | uložit snímek |
 | `Ctrl+R` | spustit / zastavit nahrávání |
@@ -175,13 +187,16 @@ bmscam/
     backends/
         uvc_opencv.py         záložní obraz přes OpenCV (UVC)
     ui/
-        main_window.py        hlavní okno, menu, snímání, profily
+        theme.py              barvy, písmo, ikony a stylopis (Modernist)
+        widgets.py            stavební prvky – karty, segmentové ovladače, panely
+        main_window.py        hlavní okno, snímání, profily
         controls.py           ovládací prvky generované z popisu vlastností
         video_view.py         plocha s obrazem, zoom, překryvy, výběr ROI
         led_panel.py          panel osvětlení (Arduino)
 arduino/bms_led_controller/   sketch pro Arduino Mega (FastLED)
 tests/test_smoke.py           testy bez hardwaru
 docs/zapojeni_led.md          zapojení osvětlení a popis protokolu
+docs/design/                  zdrojový návrh rozhraní a jeho design system
 docs/uvcham.h                 hlavičkový soubor SDK (reference)
 ```
 

@@ -6,6 +6,7 @@ import sys
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication
 
+from .ui import theme
 from .ui.main_window import APP_NAME, MainWindow
 
 
@@ -47,6 +48,8 @@ def main(argv=None) -> int:
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("BMS")
+    app.setStyle("Fusion")
+    app.setStyleSheet(theme.stylesheet())
 
     win = MainWindow(prefer_demo=args.demo, include_demo=not args.no_demo)
     win.show()

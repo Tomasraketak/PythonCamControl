@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/modernist-ca68f0e9-2eba-4c58-9c8a-4b3f48721729/styles.css">
+<script src="_ds/modernist-ca68f0e9-2eba-4c58-9c8a-4b3f48721729/_ds_bundle.js"></script>
+<style>
+  .icon-defs{position:absolute;width:0;height:0;overflow:hidden}
+  .shell{position:relative;width:1760px;height:1000px;background:var(--color-bg);display:flex;flex-direction:column;overflow:hidden;font-family:var(--font-body);}
+  .shell input[type=checkbox],.shell input[type=radio]{position:absolute;opacity:0;width:0;height:0;pointer-events:none}
+  .toolbar{display:flex;align-items:center;gap:var(--space-2);padding:10px var(--space-4);border-bottom:2px solid var(--color-divider);background:var(--color-bg)}
+  .vdiv{width:1px;height:24px;background:var(--color-divider);margin:0 4px;flex:none}
+  .iconToggle{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border:1px solid var(--color-divider);cursor:pointer;color:var(--color-text)}
+  .iconToggle:hover{background:color-mix(in srgb, var(--color-text) 7%, transparent)}
+  .iconToggle:has(input:checked){background:var(--color-accent);border-color:var(--color-accent);color:var(--color-bg)}
+  .zoomreadout{font-family:var(--font-heading);font-weight:800;font-size:13px;width:52px;text-align:center;flex:none}
+  .main-row{flex:1;display:flex;min-height:0}
+  .panel{display:flex;flex-direction:column;border-right:2px solid var(--color-divider);background:var(--color-bg);transition:width .18s ease;overflow:hidden}
+  .panel-right{border-right:none;border-left:2px solid var(--color-divider)}
+  .panel-left{width:340px;flex:none}
+  .panel-right{width:340px;flex:none}
+  .panel-left:has(#collapseLeft:checked){width:52px}
+  .panel-right:has(#collapseRight:checked){width:52px}
+  .panel-head{display:flex;align-items:center;justify-content:space-between;padding:var(--space-3) var(--space-4);flex:none}
+  .panel-body{flex:1;overflow:auto;padding:0 var(--space-4) var(--space-4);display:flex;flex-direction:column;gap:var(--space-4)}
+  .panel-left:has(#collapseLeft:checked) .panel-body,.panel-right:has(#collapseRight:checked) .panel-body{display:none}
+  .section-label{font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-700);margin-bottom:var(--space-2)}
+  .row{display:flex;align-items:center;gap:var(--space-2)}
+  .row-between{display:flex;align-items:center;justify-content:space-between}
+  .meta{font-size:11px;color:var(--color-neutral-600)}
+  .field label{display:block;font-size:12px;margin-bottom:5px;color:color-mix(in srgb, var(--color-text) 70%, transparent)}
+  select.input{appearance:none;background-image:none}
+  .checkbox{display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;user-select:none}
+  .checkbox .box{width:16px;height:16px;flex:none;border:1.5px solid var(--color-divider);background:var(--color-surface)}
+  .checkbox input:checked + .box{background:var(--color-accent);border-color:var(--color-accent)}
+  .checkbox:hover .box{border-color:var(--color-accent)}
+  .slider-row{display:flex;flex-direction:column;gap:6px}
+  .slider{-webkit-appearance:none;appearance:none;width:100%;height:2px;background:var(--color-divider);outline:none;margin:8px 0}
+  .slider::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:20px;background:var(--color-accent);border-radius:0;cursor:pointer}
+  .slider::-moz-range-thumb{width:12px;height:20px;background:var(--color-accent);border:none;border-radius:0;cursor:pointer}
+  .slider:disabled::-webkit-slider-thumb{background:var(--color-neutral-400)}
+  .slider:disabled::-moz-range-thumb{background:var(--color-neutral-400)}
+  .manual-slider{transition:opacity .15s}
+  #autoExp:checked ~ .manual-block{opacity:.4;pointer-events:none}
+  #autoWB:checked ~ .manual-block-wb{opacity:.4;pointer-events:none}
+  .tabgroup .seg{width:100%}
+  .tabgroup .seg-opt{flex:1;justify-content:center;padding:7px 4px;font-size:11.5px}
+  .tabpanel{display:none}
+  #tabExp:checked ~ .tabpanels .p-exp,
+  #tabWB:checked ~ .tabpanels .p-wb,
+  #tabImg:checked ~ .tabpanels .p-img,
+  #tabFocus:checked ~ .tabpanels .p-focus,
+  #tabVid:checked ~ .tabpanels .p-vid{display:flex}
+  .video-stage{flex:1;position:relative;background:#141414;display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .shell:has(#videoLight:checked) .video-stage{background:var(--color-neutral-200)}
+  .video-empty{display:flex;flex-direction:column;align-items:center;gap:var(--space-3);color:var(--color-neutral-500);text-align:center}
+  .shell:has(#videoLight:checked) .video-empty{color:var(--color-neutral-600)}
+  .video-empty h4{color:inherit;margin:0}
+  .video-overlay-top{position:absolute;top:var(--space-3);left:var(--space-3);right:var(--space-3);display:flex;justify-content:space-between;pointer-events:none}
+  .stat-pill{display:flex;gap:var(--space-3);padding:6px 14px;background:color-mix(in srgb, #000 55%, transparent);color:#fff;font-size:12px;pointer-events:auto}
+  .shell:has(#videoLight:checked) .stat-pill{background:color-mix(in srgb, #fff 75%, transparent);color:var(--color-text)}
+  .stat-pill span b{font-family:var(--font-heading)}
+  .rec-pill{display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--color-accent);color:#fff;font-size:12px;font-weight:600;letter-spacing:.04em;pointer-events:auto}
+  .rec-dot{width:8px;height:8px;border-radius:50%;background:#fff}
+  .side-grid{display:grid;grid-template-columns:1fr 1.3fr 1fr;grid-template-rows:auto auto auto;gap:6px}
+  .side-cell{border:1px solid var(--color-divider);padding:8px;display:flex;flex-direction:column;gap:4px}
+  .side-cell .lbl{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--color-neutral-600)}
+  .lens-cell{display:flex;align-items:center;justify-content:center;color:var(--color-neutral-500)}
+  .seg-icons .seg-opt{padding:7px 10px}
+  details.console{border:1px solid var(--color-divider)}
+  details.console summary{padding:var(--space-2) var(--space-3);cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--color-neutral-700)}
+  details.console .log{padding:var(--space-3);font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;color:var(--color-neutral-700);background:var(--color-surface);max-height:110px;overflow:auto;border-top:1px solid var(--color-divider)}
+  .statusbar{display:flex;align-items:center;border-top:2px solid var(--color-divider);font-size:12px;flex:none}
+  .statusbar>div{padding:8px var(--space-4);border-right:1px solid var(--color-divider)}
+  .help-backdrop{display:none;position:absolute;inset:0;background:color-mix(in srgb, var(--color-neutral-900) 55%, transparent);align-items:center;justify-content:center;z-index:50}
+  .shell:has(#helpModal:checked) .help-backdrop{display:flex}
+  .help-dialog{width:520px;max-height:640px;background:var(--color-bg);box-shadow:var(--shadow-lg);padding:var(--space-6);display:flex;flex-direction:column;gap:var(--space-3)}
+  .shortcut-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--color-divider);font-size:13px}
+  kbd{font-family:var(--font-heading);font-weight:800;font-size:12px;background:var(--color-surface);border:1px solid var(--color-divider);padding:2px 8px}
+</style>
+</helmet>
+
+<div class="shell">
+  <input type="checkbox" id="collapseLeft"><input type="checkbox" id="collapseRight">
+  <input type="checkbox" id="videoLight"><input type="checkbox" id="helpModal">
+  <input type="checkbox" id="gridToggle"><input type="checkbox" id="crossToggle"><input type="checkbox" id="scaleToggle">
+
+  <svg class="icon-defs" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-chev-l" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></symbol>
+    <symbol id="i-chev-r" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/></symbol>
+    <symbol id="i-maximize" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></symbol>
+    <symbol id="i-crosshair" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/></symbol>
+    <symbol id="i-ruler" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.3 8.7 8.7 21.3a1 1 0 0 1-1.4 0l-4.6-4.6a1 1 0 0 1 0-1.4L15.3 2.7a1 1 0 0 1 1.4 0l4.6 4.6a1 1 0 0 1 0 1.4Z"/><path d="m14.5 12.5 2-2"/><path d="m11.5 9.5 2-2"/><path d="m8.5 6.5 2-2"/><path d="m17.5 15.5 2-2"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.9 4.9 1.4 1.4"/><path d="m17.7 17.7 1.4 1.4"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.3 17.7-1.4 1.4"/><path d="m19.1 4.9-1.4 1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 1 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7H7v7"/><path d="M7 3v4h8"/></symbol>
+    <symbol id="i-plug" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/></symbol>
+    <symbol id="i-video" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 13 5.2-3.6a1 1 0 0 1 1.6.8v9.6a1 1 0 0 1-1.6.8L16 17"/><rect x="1" y="6" width="15" height="12" rx="2"/></symbol>
+    <symbol id="i-timer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2h4"/><path d="M12 14v-4"/><circle cx="12" cy="14" r="8"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9L9.1 3.9A2 2 0 0 0 7.4 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></symbol>
+    <symbol id="i-aperture" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m14.31 8 5.74 9.94"/><path d="M9.69 8h11.48"/><path d="m7.38 12 5.74-9.94"/><path d="M9.69 16 3.95 6.06"/><path d="M14.31 16H2.83"/><path d="m16.62 12-5.74 9.94"/></symbol>
+    <symbol id="i-lightbulb" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.7A5 5 0 0 0 18 8a6 6 0 0 0-12 0c0 1.2.5 2.3 1.5 3.3.7 1 1.3 1.6 1.5 2.7"/><path d="M9 18h6"/><path d="M10 22h4"/></symbol>
+  </svg>
+
+  <nav class="nav" style="padding:var(--space-3) var(--space-4)">
+    <span class="nav-brand">BMS CAM CONTROL</span>
+    <span class="tag tag-outline">Nepřipojeno</span>
+    <label class="btn btn-secondary btn-icon" for="helpModal" aria-label="Nápověda"><svg width="16" height="16"><use href="#i-help"/></svg></label>
+    <button type="button" class="btn btn-primary"><svg width="14" height="14"><use href="#i-plug"/></svg>Připojit kameru</button>
+  </nav>
+
+  <div class="toolbar">
+    <div class="seg">
+      <label class="seg-opt"><input type="radio" name="fitmode" checked/><svg width="13" height="13"><use href="#i-maximize"/></svg>Fit</label>
+      <label class="seg-opt"><input type="radio" name="fitmode"/>1:1</label>
+    </div>
+    <div class="vdiv"></div>
+    <button type="button" class="btn btn-secondary btn-icon" aria-label="Oddálit"><svg width="15" height="15"><use href="#i-minus"/></svg></button>
+    <span class="zoomreadout">100%</span>
+    <button type="button" class="btn btn-secondary btn-icon" aria-label="Přiblížit"><svg width="15" height="15"><use href="#i-plus"/></svg></button>
+    <div class="vdiv"></div>
+    <label class="iconToggle" for="gridToggle" aria-label="Mřížka"><input type="checkbox" id="gridToggle_dup" style="display:none"/><svg width="15" height="15"><use href="#i-grid"/></svg></label>
+    <label class="iconToggle" for="crossToggle" aria-label="Kříž"><svg width="15" height="15"><use href="#i-crosshair"/></svg></label>
+    <label class="iconToggle" for="scaleToggle" aria-label="Měřítko"><svg width="15" height="15"><use href="#i-ruler"/></svg></label>
+    <div style="flex:1"></div>
+    <label class="iconToggle" for="videoLight" aria-label="Světlé pozadí náhledu">
+      <svg width="15" height="15" style="display:block"><use href="#i-moon"/></svg>
+    </label>
+  </div>
+
+  <div class="main-row">
+
+    <div class="panel panel-left">
+      <div class="panel-head">
+        <span class="section-label" style="margin-bottom:0">Ovládání kamery</span>
+        <label class="btn btn-secondary btn-icon" for="collapseLeft" aria-label="Skrýt panel"><svg width="14" height="14"><use href="#i-chev-l"/></svg></label>
+      </div>
+      <div class="panel-body">
+
+        <div class="field" style="margin-top:var(--space-1)">
+          <label>Profil nastavení</label>
+          <div class="row">
+            <select class="input" style="flex:1"><option>Výchozí</option><option>4× objektiv, jasné pole</option><option>10× objektiv, temné pole</option></select>
+            <button type="button" class="btn btn-secondary btn-icon" aria-label="Uložit profil"><svg width="15" height="15"><use href="#i-save"/></svg></button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-kicker">Kamera</div>
+          <select class="input"><option>BMS Microscope Cam [uvcam]</option></select>
+          <div class="row">
+            <button type="button" class="btn btn-primary" style="flex:2"><svg width="14" height="14"><use href="#i-plug"/></svg>Připojit</button>
+            <button type="button" class="btn btn-secondary" style="flex:1"><svg width="14" height="14"><use href="#i-search"/></svg>Hledat</button>
+          </div>
+          <div class="row-between"><span class="meta">Rozlišení</span><select class="input" style="width:62%"><option>3840 × 2160 (8.3 MPx)</option><option>1920 × 1080</option></select></div>
+          <div class="row-between"><span class="meta">Kodek</span><select class="input" style="width:62%"><option>MJPG</option><option>YUY2</option></select></div>
+          <div class="meta">vid 0547 · pid 6300 · fw 1.29030</div>
+        </div>
+
+        <div class="tabgroup" style="display:flex;flex-direction:column;gap:var(--space-3);flex:1;min-height:0">
+          <input type="radio" name="proptab" id="tabExp" checked><input type="radio" name="proptab" id="tabWB"><input type="radio" name="proptab" id="tabImg"><input type="radio" name="proptab" id="tabFocus"><input type="radio" name="proptab" id="tabVid">
+          <div class="seg">
+            <label class="seg-opt" for="tabExp">Expozice</label>
+            <label class="seg-opt" for="tabWB">Bílá</label>
+            <label class="seg-opt" for="tabImg">Obraz</label>
+            <label class="seg-opt" for="tabFocus">Ostření</label>
+            <label class="seg-opt" for="tabVid">Video</label>
+          </div>
+
+          <div class="tabpanels" style="flex:1;overflow:auto">
+            <div class="tabpanel p-exp" style="flex-direction:column;gap:var(--space-3)">
+              <label class="checkbox"><input type="checkbox" id="autoExp" checked/><span class="box"></span>Automatická expozice</label>
+              <div class="manual-block" style="display:flex;flex-direction:column;gap:var(--space-3)">
+                <div class="slider-row"><div class="row-between"><span>Expoziční čas</span><b class="meta">16.67 ms</b></div><input class="slider" type="range" value="60"/></div>
+                <div class="slider-row"><div class="row-between"><span>Zisk (gain)</span><b class="meta">100 %</b></div><input class="slider" type="range" value="45"/></div>
+              </div>
+              <div class="slider-row"><div class="row-between"><span>Cílový jas AE</span><b class="meta">120</b></div><input class="slider" type="range" value="55"/></div>
+              <div class="field"><label>Frekvence sítě</label><select class="input"><option>50 Hz (AC)</option><option>60 Hz (AC)</option></select></div>
+            </div>
+
+            <div class="tabpanel p-wb" style="flex-direction:column;gap:var(--space-3)">
+              <label class="checkbox"><input type="checkbox" id="autoWB" checked/><span class="box"></span>Automatické vyvážení bílé</label>
+              <div class="manual-block-wb" style="display:flex;flex-direction:column;gap:var(--space-3)">
+                <div class="slider-row"><div class="row-between"><span>Teplota</span><b class="meta">5600 K</b></div><input class="slider" type="range" value="55"/></div>
+                <div class="slider-row"><div class="row-between"><span>Tón (tint)</span><b class="meta">0</b></div><input class="slider" type="range" value="50"/></div>
+              </div>
+              <button type="button" class="btn btn-secondary btn-block"><svg width="14" height="14"><use href="#i-aperture"/></svg>Jednorázové vyvážení na bílý list</button>
+            </div>
+
+            <div class="tabpanel p-img" style="flex-direction:column;gap:var(--space-3)">
+              <div class="slider-row"><div class="row-between"><span>Jas</span><b class="meta">50</b></div><input class="slider" type="range" value="50"/></div>
+              <div class="slider-row"><div class="row-between"><span>Kontrast</span><b class="meta">50</b></div><input class="slider" type="range" value="50"/></div>
+              <div class="slider-row"><div class="row-between"><span>Sytost</span><b class="meta">55</b></div><input class="slider" type="range" value="55"/></div>
+              <div class="slider-row"><div class="row-between"><span>Ostrost</span><b class="meta">40</b></div><input class="slider" type="range" value="40"/></div>
+              <div class="slider-row"><div class="row-between"><span>Gamma</span><b class="meta">100</b></div><input class="slider" type="range" value="50"/></div>
+              <button type="button" class="btn btn-ghost"><svg width="13" height="13"><use href="#i-refresh"/></svg>Obnovit výchozí</button>
+            </div>
+
+            <div class="tabpanel p-focus" style="flex-direction:column;gap:var(--space-3)">
+              <label class="checkbox"><input type="checkbox" id="autoFocus"/><span class="box"></span>Průběžné automatické zaostřování</label>
+              <div class="slider-row"><div class="row-between"><span>Zaostření (manuál)</span><b class="meta">62</b></div><input class="slider" type="range" value="62"/></div>
+              <div class="slider-row"><div class="row-between"><span>Osvětlení objektivu (ring)</span><b class="meta">30 %</b></div><input class="slider" type="range" value="30"/></div>
+            </div>
+
+            <div class="tabpanel p-vid" style="flex-direction:column;gap:var(--space-3)">
+              <div class="field"><label>Snímková frekvence</label><select class="input"><option>30 fps</option><option>60 fps</option><option>15 fps</option></select></div>
+              <div class="slider-row"><div class="row-between"><span>Kvalita / bitrate</span><b class="meta">Vysoká</b></div><input class="slider" type="range" value="75"/></div>
+              <label class="checkbox"><input type="checkbox"/><span class="box"></span>Zrcadlit obraz (horizontálně)</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="hr" style="margin:0"></div>
+
+        <div class="card">
+          <div class="card-kicker">Snímání</div>
+          <div class="row">
+            <button type="button" class="btn btn-primary" style="flex:1"><svg width="14" height="14"><use href="#i-camera"/></svg>Uložit snímek</button>
+            <button type="button" class="btn btn-secondary" style="flex:1"><svg width="14" height="14"><use href="#i-video"/></svg>Nahrát video</button>
+          </div>
+          <div class="row">
+            <button type="button" class="btn btn-secondary" style="flex:1"><svg width="14" height="14"><use href="#i-timer"/></svg>Časosběr</button>
+            <input class="input" type="number" value="10" style="width:64px;text-align:center"/><span class="meta">s / snímek</span>
+          </div>
+          <div class="meta">Ukládat do: C:\Users\...\BMSCam</div>
+          <button type="button" class="btn btn-ghost"><svg width="13" height="13"><use href="#i-folder"/></svg>Změnit složku pro ukládání…</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="video-stage">
+      <div class="video-overlay-top">
+        <div class="stat-pill"><span>EXP <b>16.7 ms</b></span><span>GAIN <b>100%</b></span><span>WB <b>5600K</b></span></div>
+        <div class="rec-pill" style="display:none"><span class="rec-dot"></span>REC 00:00</div>
+      </div>
+      <div class="video-empty">
+        <svg width="40" height="40"><use href="#i-camera"/></svg>
+        <h4>Žádný obraz</h4>
+        <p style="margin:0;font-size:13px;max-width:320px">Připojte kameru a stiskněte „Připojit kameru", nebo klávesu <kbd>F5</kbd>.</p>
+      </div>
+    </div>
+
+    <div class="panel panel-right">
+      <div class="panel-head">
+        <label class="btn btn-secondary btn-icon" for="collapseRight" aria-label="Skrýt panel"><svg width="14" height="14"><use href="#i-chev-r"/></svg></label>
+        <span class="section-label" style="margin-bottom:0;text-align:right">Osvětlení</span>
+      </div>
+      <div class="panel-body">
+
+        <div class="card">
+          <div class="row-between"><span class="card-kicker" style="margin:0">Arduino</span><span class="tag tag-outline">Nepřipojeno</span></div>
+          <div class="row">
+            <select class="input" style="flex:1"><option>COM3 – Arduino Mega</option></select>
+            <select class="input" style="width:78px"><option>115200</option></select>
+          </div>
+          <div class="row">
+            <button type="button" class="btn btn-secondary" style="flex:1"><svg width="14" height="14"><use href="#i-search"/></svg>Hledat</button>
+            <button type="button" class="btn btn-primary" style="flex:1"><svg width="14" height="14"><use href="#i-plug"/></svg>Připojit</button>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:var(--space-3)">
+          <div class="row-between">
+            <label class="checkbox"><input type="checkbox"/><span class="box"></span>Osvětlení zapnuto</label>
+            <button type="button" class="btn btn-ghost">Zhasnout vše</button>
+          </div>
+          <div class="slider-row"><div class="row-between"><span>Hlavní jas</span><b class="meta">128</b></div><input class="slider" type="range" value="50"/></div>
+          <div class="row">
+            <select class="input" style="flex:1"><option>Bílá</option><option>Teplá</option><option>Studená</option><option>RGB</option></select>
+            <button type="button" class="btn btn-secondary">Vlastní…</button>
+          </div>
+          <div>
+            <div class="meta" style="margin-bottom:6px">Šikmé osvětlení</div>
+            <div class="seg seg-icons" style="width:100%">
+              <label class="seg-opt" style="flex:1;justify-content:center"><input type="radio" name="oblique" checked/>H</label>
+              <label class="seg-opt" style="flex:1;justify-content:center"><input type="radio" name="oblique"/>P</label>
+              <label class="seg-opt" style="flex:1;justify-content:center"><input type="radio" name="oblique"/>D</label>
+              <label class="seg-opt" style="flex:1;justify-content:center"><input type="radio" name="oblique"/>L</label>
+              <label class="seg-opt" style="flex:1;justify-content:center"><input type="radio" name="oblique"/>◎</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="hr" style="margin:0"></div>
+
+        <div>
+          <div class="section-label">Jednotlivé strany</div>
+          <div class="side-grid">
+            <div></div>
+            <div class="side-cell"><span class="lbl">1 · Horní</span><input class="slider" type="range" value="70"/></div>
+            <div></div>
+            <div class="side-cell"><span class="lbl">4 · Levá</span><input class="slider" type="range" value="20"/></div>
+            <div class="lens-cell"><svg width="30" height="30"><use href="#i-aperture"/></svg></div>
+            <div class="side-cell"><span class="lbl">2 · Pravá</span><input class="slider" type="range" value="20"/></div>
+            <div></div>
+            <div class="side-cell"><span class="lbl">3 · Dolní</span><input class="slider" type="range" value="45"/></div>
+            <div></div>
+          </div>
+        </div>
+
+        <details class="console">
+          <summary>Sériová konzole</summary>
+          <div class="log">&gt; READY&#10;&gt; SET BRIGHT 1 128&#10;&gt; OK</div>
+        </details>
+      </div>
+    </div>
+  </div>
+
+  <div class="statusbar">
+    <div><span class="tag tag-outline">Nepřipojeno</span></div>
+    <div class="meta">–</div>
+    <div class="meta">0,0 fps</div>
+    <div class="meta">0 snímků</div>
+    <div style="flex:1"></div>
+    <div class="meta">Ukládat do: C:\Users\...\BMSCam</div>
+  </div>
+
+  <div class="help-backdrop">
+    <div class="help-dialog">
+      <div class="row-between">
+        <span class="dialog-title" style="margin:0">Klávesové zkratky</span>
+        <label class="btn btn-secondary btn-icon" for="helpModal" aria-label="Zavřít"><svg width="14" height="14"><use href="#i-x"/></svg></label>
+      </div>
+      <div>
+        <div class="shortcut-row"><span>Připojit / odpojit kameru</span><kbd>F5</kbd></div>
+        <div class="shortcut-row"><span>Uložit snímek</span><kbd>Space</kbd></div>
+        <div class="shortcut-row"><span>Spustit / zastavit nahrávání</span><kbd>R</kbd></div>
+        <div class="shortcut-row"><span>Přizpůsobit náhled (Fit)</span><kbd>0</kbd></div>
+        <div class="shortcut-row"><span>Zvětšení 100 %</span><kbd>1</kbd></div>
+        <div class="shortcut-row"><span>Přiblížit / oddálit</span><kbd>+</kbd> / <kbd>–</kbd></div>
+        <div class="shortcut-row"><span>Mřížka</span><kbd>G</kbd></div>
+        <div class="shortcut-row"><span>Zaměřovací kříž</span><kbd>C</kbd></div>
+        <div class="shortcut-row"><span>Skrýt / zobrazit panel osvětlení</span><kbd>L</kbd></div>
+        <div class="shortcut-row" style="border-bottom:none"><span>Zavřít tento dialog</span><kbd>Esc</kbd></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1760,&quot;height&quot;:1000}}"></script>
+</body>
+</html>

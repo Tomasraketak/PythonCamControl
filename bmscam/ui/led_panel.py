@@ -2,29 +2,33 @@
 
 from typing import List, Optional
 
-from PyQt5.QtCore import QSettings, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QFont, QTextCursor
+from PyQt5.QtCore import QEvent, QSettings, Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QColor, QTextCursor
 from PyQt5.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QFrame,
-                             QGridLayout, QGroupBox, QHBoxLayout, QLabel,
-                             QLineEdit, QPlainTextEdit, QPushButton,
-                             QSizePolicy, QSlider, QSpinBox, QToolButton,
-                             QVBoxLayout, QWidget)
+                             QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+                             QPlainTextEdit, QPushButton, QSizePolicy, QSlider,
+                             QSpinBox, QVBoxLayout, QWidget)
 
 from ..leds import (BAUD, LEDS_PER_PANEL, PANEL_NAMES, PANEL_SHORT, PANELS,
                     PRESETS, LedProtocol, LedState, color_to_hex)
 from ..serialio import (SerialLink, available, guess_arduino_port,
                         list_serial_ports, unavailable_reason)
+from . import theme
+from .widgets import (Card, SegmentedControl, Tag, button, hline, icon_button,
+                      label, row)
 
 
 def _swatch_style(color) -> str:
     r, g, b = color
     text = "#000000" if (r * 299 + g * 587 + b * 114) / 1000 > 140 else "#ffffff"
-    return (f"background-color: rgb({r},{g},{b}); color: {text};"
-            "border: 1px solid palette(mid); padding: 4px 8px;")
+    return (f"QPushButton {{ background-color: rgb({r},{g},{b}); color: {text};"
+            f"border: 1px solid {theme.DIVIDER}; padding: 3px; font-size: 11px;"
+            "font-weight: 700; }"
+            f"QPushButton:hover {{ border-color: {theme.ACCENT}; }}")
 
 
-class PanelWidget(QGroupBox):
-    """Ovládání jednoho modulu: zapnutí, jas, barva."""
+class PanelWidget(QFrame):
+    """Jedna strana čtverce: zapnutí, jas, barva."""
 
     powerChanged = pyqtSignal(int, bool)
     brightnessChanged = pyqtSignal(int, int)
@@ -33,54 +37,80 @@ class PanelWidget(QGroupBox):
     copyToAllRequested = pyqtSignal(tuple)
 
     def __init__(self, index: int, parent=None):
-        super().__init__(f"{index}. {PANEL_NAMES[index - 1]}", parent)
+        super().__init__(parent)
         self.index = index
         self._color = (255, 255, 255)
         self._updating = False
+        self.setStyleSheet(f"PanelWidget {{ border: 1px solid {theme.DIVIDER}; }}")
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(8, 4, 8, 6)
-        lay.setSpacing(4)
+        lay.setContentsMargins(7, 5, 7, 6)
+        lay.setSpacing(3)
 
-        top = QHBoxLayout()
-        self.chk_on = QCheckBox("Zapnuto")
-        self.chk_on.toggled.connect(
-            lambda on: self._emit(self.powerChanged, self.index, on))
-        top.addWidget(self.chk_on)
-        top.addStretch(1)
-        self.btn_solo = QToolButton()
-        self.btn_solo.setText("sólo")
+        head = QHBoxLayout()
+        head.setContentsMargins(0, 0, 0, 0)
+        head.setSpacing(4)
+        name = label(f"{index} · {PANEL_NAMES[index - 1]}", "kicker")
+        name.setMinimumWidth(0)
+        head.addWidget(name)
+        head.addStretch(1)
+        self.btn_solo = QPushButton("sólo")
         self.btn_solo.setToolTip(
             f"Rozsvítit pouze tuto stranu – osvětlení {PANEL_SHORT[index - 1]}")
-        self.btn_solo.setAutoRaise(True)
+        self.btn_solo.setStyleSheet(
+            f"QPushButton {{ border:none; color:{theme.NEUTRAL_600}; font-size:10px;"
+            "padding:0 3px; }"
+            f"QPushButton:hover {{ color:{theme.ACCENT}; }}")
+        self.btn_solo.setCursor(Qt.PointingHandCursor)
         self.btn_solo.clicked.connect(lambda: self.soloRequested.emit(self.index))
-        top.addWidget(self.btn_solo)
-        lay.addLayout(top)
+        head.addWidget(self.btn_solo)
+        self.chk_on = QCheckBox()
+        self.chk_on.setToolTip("Zapnout / vypnout tuto stranu")
+        self.chk_on.toggled.connect(
+            lambda on: self._emit(self.powerChanged, self.index, on))
+        head.addWidget(self.chk_on)
+        lay.addLayout(head)
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Jas"))
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(6)
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setRange(0, 255)
         self.slider.setValue(255)
+        self.slider.setMinimumWidth(40)
         self.slider.valueChanged.connect(self._onBrightness)
-        row.addWidget(self.slider, 1)
+        body.addWidget(self.slider, 1)
         self.spin = QSpinBox()
         self.spin.setRange(0, 255)
         self.spin.setValue(255)
+        self.spin.setProperty("role", "inline")
+        self.spin.setButtonSymbols(QSpinBox.NoButtons)
+        self.spin.setAlignment(Qt.AlignRight)
         self.spin.setKeyboardTracking(False)
-        self.spin.setMaximumWidth(64)
+        self.spin.setFixedWidth(34)
         self.spin.valueChanged.connect(self.slider.setValue)
-        row.addWidget(self.spin)
-        lay.addLayout(row)
+        body.addWidget(self.spin)
+        lay.addLayout(body)
 
         bottom = QHBoxLayout()
-        self.btn_color = QPushButton("Barva…")
+        bottom.setContentsMargins(0, 0, 0, 0)
+        bottom.setSpacing(4)
+        self.btn_color = QPushButton()
+        self.btn_color.setCursor(Qt.PointingHandCursor)
+        self.btn_color.setToolTip("Barva této strany")
+        self.btn_color.setMinimumWidth(40)
         self.btn_color.clicked.connect(self._pickColor)
         bottom.addWidget(self.btn_color, 1)
-        self.btn_copy = QToolButton()
-        self.btn_copy.setText("→ vše")
-        self.btn_copy.setToolTip("Použít tuto barvu na všechny panely")
-        self.btn_copy.setAutoRaise(True)
+        self.btn_copy = QPushButton("→")
+        self.btn_copy.setFixedWidth(26)
+        self.btn_copy.setToolTip("Použít tuto barvu na všechny strany")
+        self.btn_copy.setStyleSheet(
+            f"QPushButton {{ border:1px solid {theme.DIVIDER}; padding:3px 0;"
+            "font-size:13px; font-weight:700; }"
+            f"QPushButton:hover {{ background:{theme.NEUTRAL_300}; }}")
+        self.btn_copy.setCursor(Qt.PointingHandCursor)
         self.btn_copy.clicked.connect(
             lambda: self.copyToAllRequested.emit(self._color))
         bottom.addWidget(self.btn_copy)
@@ -94,14 +124,14 @@ class PanelWidget(QGroupBox):
             signal.emit(*args)
 
     def _onBrightness(self, value: int) -> None:
-        self._updating, was = True, self._updating
+        was, self._updating = self._updating, True
         self.spin.setValue(value)
         self._updating = was
         self._emit(self.brightnessChanged, self.index, value)
 
     def _pickColor(self) -> None:
-        current = QColor(*self._color)
-        chosen = QColorDialog.getColor(current, self, f"Barva panelu {self.index}")
+        chosen = QColorDialog.getColor(QColor(*self._color), self,
+                                       f"Barva – {PANEL_NAMES[self.index - 1]}")
         if chosen.isValid():
             rgb = (chosen.red(), chosen.green(), chosen.blue())
             self.setColor(rgb)
@@ -147,15 +177,13 @@ class LedPanel(QWidget):
         self.link.closed.connect(self._onClosed)
         self.link.failed.connect(self._onFailed)
         self.link.lineReceived.connect(self._onLine)
-        self.link.lineSent.connect(lambda t: self._log(f"» {t}", "#2a7"))
+        self.link.lineSent.connect(lambda t: self._log(f"» {t}", "#2a7a55"))
 
-        # sloučení rychlých pohybů posuvníkem do jednoho příkazu
         self._send_timer = QTimer(self)
         self._send_timer.setSingleShot(True)
         self._send_timer.setInterval(60)
         self._send_timer.timeout.connect(self._flushBrightness)
 
-        # po každé změně si vyžádáme skutečný stav z desky
         self._sync_timer = QTimer(self)
         self._sync_timer.setSingleShot(True)
         self._sync_timer.setInterval(250)
@@ -168,103 +196,107 @@ class LedPanel(QWidget):
     # =================================================================== UI ==
     def _buildUi(self) -> None:
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(8, 8, 8, 8)
-        lay.setSpacing(8)
-        lay.addWidget(self._buildConnectionBox())
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(theme.SPACE_4)
+        lay.addWidget(self._buildConnectionCard())
         lay.addWidget(self._buildMasterBox())
-        lay.addWidget(self._buildPanelsBox())
+        lay.addWidget(hline())
+        lay.addWidget(self._buildSidesBox())
         lay.addWidget(self._buildConsoleBox())
         lay.addStretch(1)
 
-    def _buildConnectionBox(self) -> QGroupBox:
-        box = QGroupBox("Připojení k Arduinu")
-        lay = QVBoxLayout(box)
-        row = QHBoxLayout()
+    def _buildConnectionCard(self) -> Card:
+        card = Card()
+        self.tag_link = Tag("Nepřipojeno")
+        card.add(row(label("Arduino", "kicker"), None, self.tag_link))
+
         self.cmb_port = QComboBox()
-        self.cmb_port.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        self.cmb_port.setMinimumWidth(180)
-        row.addWidget(self.cmb_port, 1)
+        self.cmb_port.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLength)
+        self.cmb_port.setMinimumContentsLength(8)
+        self.cmb_port.setMinimumWidth(90)
+        card.add(self.cmb_port)
+
         self.cmb_baud = QComboBox()
         self.cmb_baud.addItems(["9600", "19200", "38400", "57600", "115200", "250000"])
         self.cmb_baud.setCurrentText(str(self.settings.value("led_baud", BAUD)))
-        row.addWidget(self.cmb_baud)
-        self.btn_ports = QPushButton("Hledat")
+        self.cmb_baud.setFixedWidth(92)
+        self.btn_ports = button("Hledat", "secondary")
         self.btn_ports.clicked.connect(self.refreshPorts)
-        row.addWidget(self.btn_ports)
-        self.btn_connect = QPushButton("Připojit")
+        self.btn_connect = button("Připojit", "primary")
         self.btn_connect.clicked.connect(self.toggleConnection)
-        row.addWidget(self.btn_connect)
-        lay.addLayout(row)
+        card.add(row(self.cmb_baud, (self.btn_ports, 1), (self.btn_connect, 1)))
 
-        self.lbl_status = QLabel()
+        self.lbl_status = label("", "meta")
         self.lbl_status.setWordWrap(True)
-        self.lbl_status.setStyleSheet("color: palette(mid); font-size: 11px;")
-        lay.addWidget(self.lbl_status)
-        return box
+        card.add(self.lbl_status)
+        return card
 
-    def _buildMasterBox(self) -> QGroupBox:
-        box = QGroupBox("Všechny panely najednou")
+    def _buildMasterBox(self) -> QWidget:
+        box = QWidget()
         lay = QVBoxLayout(box)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(theme.SPACE_3)
 
-        row = QHBoxLayout()
         self.chk_master = QCheckBox("Osvětlení zapnuto")
         self.chk_master.toggled.connect(self._onMasterPower)
-        row.addWidget(self.chk_master)
-        row.addStretch(1)
-        self.btn_off = QPushButton("Zhasnout vše")
+        self.btn_off = button("Zhasnout vše", "ghost")
         self.btn_off.clicked.connect(lambda: self.chk_master.setChecked(False))
-        row.addWidget(self.btn_off)
-        lay.addLayout(row)
+        lay.addLayout(row(self.chk_master, None, self.btn_off))
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Hlavní jas"))
+        head = QHBoxLayout()
+        head.setContentsMargins(0, 0, 0, 0)
+        head.addWidget(QLabel("Hlavní jas"))
+        head.addStretch(1)
+        self.spin_master = QSpinBox()
+        self.spin_master.setRange(0, 255)
+        self.spin_master.setValue(128)
+        self.spin_master.setProperty("role", "inline")
+        self.spin_master.setButtonSymbols(QSpinBox.NoButtons)
+        self.spin_master.setAlignment(Qt.AlignRight)
+        self.spin_master.setKeyboardTracking(False)
+        self.spin_master.setFixedWidth(42)
+        head.addWidget(self.spin_master)
+        lay.addLayout(head)
+
         self.slider_master = QSlider(Qt.Horizontal)
         self.slider_master.setRange(0, 255)
         self.slider_master.setValue(128)
         self.slider_master.valueChanged.connect(self._onMasterBrightness)
-        row.addWidget(self.slider_master, 1)
-        self.spin_master = QSpinBox()
-        self.spin_master.setRange(0, 255)
-        self.spin_master.setValue(128)
-        self.spin_master.setKeyboardTracking(False)
         self.spin_master.valueChanged.connect(self.slider_master.setValue)
-        row.addWidget(self.spin_master)
-        lay.addLayout(row)
+        lay.addWidget(self.slider_master)
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Barva"))
         self.cmb_preset = QComboBox()
         for name, rgb in PRESETS:
             self.cmb_preset.addItem(name, rgb)
+        self.cmb_preset.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLength)
+        self.cmb_preset.setMinimumContentsLength(6)
         self.cmb_preset.activated.connect(self._onPreset)
-        row.addWidget(self.cmb_preset, 1)
-        self.btn_master_color = QPushButton("Vlastní…")
+        self.btn_master_color = button("Vlastní…", "secondary")
         self.btn_master_color.clicked.connect(self._pickMasterColor)
-        row.addWidget(self.btn_master_color)
-        lay.addLayout(row)
+        lay.addLayout(row((self.cmb_preset, 1), self.btn_master_color))
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Šikmé osvětlení"))
-        self.dir_buttons = []
-        for i, short in enumerate(PANEL_SHORT, start=1):
-            btn = QPushButton(short)
-            btn.setToolTip(f"Rozsvítit pouze stranu „{PANEL_NAMES[i - 1]}“")
-            btn.clicked.connect(lambda _, n=i: self._onSolo(n))
-            row.addWidget(btn)
-            self.dir_buttons.append(btn)
-        btn_ring = QPushButton("kruhové")
-        btn_ring.setToolTip("Rozsvítit všechny čtyři strany")
-        btn_ring.clicked.connect(lambda: self.chk_master.setChecked(True) or
-                                 self._send(LedProtocol.all_power(True)))
-        row.addWidget(btn_ring)
-        lay.addLayout(row)
+        lay.addWidget(label("Šikmé osvětlení", "field"))
+        self.seg_direction = SegmentedControl(["H", "P", "D", "L", "◎"],
+                                             compact=True, preselect=False)
+        for index, short in enumerate(PANEL_SHORT):
+            self.seg_direction.buttons[index].setToolTip(
+                f"Rozsvítit pouze stranu „{PANEL_NAMES[index]}“ – osvětlení {short}")
+        self.seg_direction.buttons[4].setToolTip("Rozsvítit všechny čtyři strany")
+        self.seg_direction.currentChanged.connect(self._onDirection)
+        self.dir_buttons = self.seg_direction.buttons
+        lay.addWidget(self.seg_direction)
         return box
 
-    def _buildPanelsBox(self) -> QGroupBox:
-        """Panely rozmístěné tak, jak leží moduly kolem objektivu."""
-        box = QGroupBox("Jednotlivé strany")
-        grid = QGridLayout(box)
-        grid.setSpacing(6)
+    def _buildSidesBox(self) -> QWidget:
+        """Strany rozmístěné tak, jak leží moduly kolem objektivu."""
+        box = QWidget()
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(theme.SPACE_2)
+        lay.addWidget(label("Jednotlivé strany", "section"))
+
+        grid = QGridLayout()
+        grid.setSpacing(5)
         self.panels: List[PanelWidget] = []
         for i in range(PANELS):
             widget = PanelWidget(i + 1)
@@ -275,65 +307,65 @@ class LedPanel(QWidget):
             widget.copyToAllRequested.connect(self._onCopyToAll)
             self.panels.append(widget)
 
-        # 1 = horní, 2 = pravý, 3 = dolní, 4 = levý
-        grid.addWidget(self.panels[0], 0, 0, 1, 3)
-        grid.addWidget(self.panels[3], 1, 0)
-        grid.addWidget(self._buildCenterHint(), 1, 1)
-        grid.addWidget(self.panels[1], 1, 2)
-        grid.addWidget(self.panels[2], 2, 0, 1, 3)
-        grid.setColumnStretch(0, 3)
-        grid.setColumnStretch(1, 2)
-        grid.setColumnStretch(2, 3)
+        grid.addWidget(self.panels[0], 0, 0, 1, 2)      # horní
+        grid.addWidget(self.panels[3], 1, 0)            # levá
+        grid.addWidget(self.panels[1], 1, 1)            # pravá
+        grid.addWidget(self.panels[2], 2, 0, 1, 2)      # dolní
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        lay.addLayout(grid)
         return box
 
-    def _buildCenterHint(self) -> QWidget:
-        """Střed čtverce – místo, kde je objektiv a vzorek."""
-        hint = QLabel("◎\nobjektiv")
-        hint.setAlignment(Qt.AlignCenter)
-        hint.setStyleSheet("color: palette(mid); border: 1px dashed palette(mid);"
-                           "border-radius: 6px; padding: 6px;")
-        hint.setToolTip("Rozmístění ovládacích prvků odpovídá poloze modulů "
-                        "kolem objektivu.")
-        return hint
-
-    def _buildConsoleBox(self) -> QGroupBox:
-        box = QGroupBox("Sériová konzole")
-        box.setCheckable(True)
-        box.setChecked(False)
+    def _buildConsoleBox(self) -> QWidget:
+        box = QWidget()
         lay = QVBoxLayout(box)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(theme.SPACE_2)
+
+        self.btn_console = QPushButton("▸  SÉRIOVÁ KONZOLE")
+        self.btn_console.setCheckable(True)
+        self.btn_console.setCursor(Qt.PointingHandCursor)
+        self.btn_console.setStyleSheet(
+            f"QPushButton {{ border:1px solid {theme.DIVIDER}; padding:6px 10px;"
+            f"text-align:left; font-size:11px; font-weight:600; letter-spacing:1px;"
+            f"color:{theme.NEUTRAL_700}; }}"
+            f"QPushButton:hover {{ background:{theme.NEUTRAL_300}; }}")
+        self.btn_console.toggled.connect(self._onConsoleToggled)
+        lay.addWidget(self.btn_console)
+
         self.console = QPlainTextEdit()
         self.console.setReadOnly(True)
         self.console.setMaximumBlockCount(500)
-        self.console.setMinimumHeight(110)
-        font = QFont("Consolas" if hasattr(QFont, "Monospace") else "monospace")
-        font.setStyleHint(QFont.Monospace)
-        font.setPointSize(9)
-        self.console.setFont(font)
+        self.console.setFixedHeight(120)
+        self.console.setVisible(False)
         lay.addWidget(self.console)
 
-        row = QHBoxLayout()
+        self.console_row = QWidget()
+        row_lay = QHBoxLayout(self.console_row)
+        row_lay.setContentsMargins(0, 0, 0, 0)
+        row_lay.setSpacing(theme.SPACE_2)
         self.edit_cmd = QLineEdit()
-        self.edit_cmd.setPlaceholderText("Příkaz pro Arduino, např. P 1 C 255 0 0")
+        self.edit_cmd.setPlaceholderText("např. P 1 C 255 0 0")
         self.edit_cmd.returnPressed.connect(self._sendManual)
         self.edit_cmd.installEventFilter(self)
-        row.addWidget(self.edit_cmd, 1)
-        btn_send = QPushButton("Odeslat")
+        row_lay.addWidget(self.edit_cmd, 1)
+        btn_send = button("Odeslat", "secondary")
         btn_send.clicked.connect(self._sendManual)
-        row.addWidget(btn_send)
-        btn_clear = QPushButton("Vyčistit")
+        row_lay.addWidget(btn_send)
+        btn_clear = icon_button("x", "Vyčistit záznam", size=30)
         btn_clear.clicked.connect(self.console.clear)
-        row.addWidget(btn_clear)
-        lay.addLayout(row)
-
-        # obsah se schová, dokud uživatel skupinu nezaškrtne
-        for w in (self.console, self.edit_cmd, btn_send, btn_clear):
-            box.toggled.connect(w.setVisible)
-            w.setVisible(False)
+        row_lay.addWidget(btn_clear)
+        self.console_row.setVisible(False)
+        lay.addWidget(self.console_row)
         return box
+
+    def _onConsoleToggled(self, on: bool) -> None:
+        self.btn_console.setText(("▾  " if on else "▸  ") + "SÉRIOVÁ KONZOLE")
+        self.console.setVisible(on)
+        self.console_row.setVisible(on)
 
     def eventFilter(self, obj, event):
         """Šipky nahoru/dolů procházejí historii odeslaných příkazů."""
-        from PyQt5.QtCore import QEvent
         if obj is self.edit_cmd and event.type() == QEvent.KeyPress and self._history:
             if event.key() == Qt.Key_Up:
                 self._history_pos = max(0, self._history_pos - 1)
@@ -357,8 +389,8 @@ class LedPanel(QWidget):
             self.lbl_status.setText(unavailable_reason())
             return
         ports = list_serial_ports()
-        for device, label in ports:
-            self.cmb_port.addItem(f"{device} – {label}", device)
+        for device, description in ports:
+            self.cmb_port.addItem(f"{device} – {description}", device)
         if not ports:
             self.cmb_port.addItem("— žádný sériový port —")
             self.btn_connect.setEnabled(False)
@@ -369,9 +401,9 @@ class LedPanel(QWidget):
         self.btn_connect.setEnabled(True)
         preferred = self.settings.value("led_port") or guess_arduino_port()
         if preferred:
-            idx = self.cmb_port.findData(preferred)
-            if idx >= 0:
-                self.cmb_port.setCurrentIndex(idx)
+            index = self.cmb_port.findData(preferred)
+            if index >= 0:
+                self.cmb_port.setCurrentIndex(index)
         self.lbl_status.setText("Vyberte port a stiskněte Připojit.")
 
     def toggleConnection(self) -> None:
@@ -389,8 +421,7 @@ class LedPanel(QWidget):
 
     def _onOpened(self, port: str) -> None:
         self._setConnected(True)
-        self._log(f"— port {port} otevřen, čekám na start desky —", "#888")
-        # Arduino se po otevření portu restartuje
+        self._log(f"— port {port} otevřen, čekám na start desky —", theme.NEUTRAL_600)
         QTimer.singleShot(int(SerialLink.BOOT_DELAY * 1000), self._handshake)
 
     def _handshake(self) -> None:
@@ -400,20 +431,23 @@ class LedPanel(QWidget):
 
     def _onClosed(self) -> None:
         self._setConnected(False)
-        self._log("— port uzavřen —", "#888")
+        self._log("— port uzavřen —", theme.NEUTRAL_600)
 
     def _onFailed(self, message: str) -> None:
         self.lbl_status.setText(message)
-        self._log(f"CHYBA: {message}", "#c33")
+        self._log(f"CHYBA: {message}", theme.ACCENT)
 
     def _setConnected(self, on: bool) -> None:
+        if not on:
+            self.seg_direction.clearSelection()
         self.btn_connect.setText("Odpojit" if on else "Připojit")
+        self.tag_link.set_active(on, "Připojeno" if on else "Nepřipojeno")
         self.cmb_port.setEnabled(not on)
         self.cmb_baud.setEnabled(not on)
         self.btn_ports.setEnabled(not on)
         for widget in (self.chk_master, self.slider_master, self.spin_master,
                        self.cmb_preset, self.btn_master_color, self.btn_off,
-                       self.edit_cmd, *self.panels, *getattr(self, "dir_buttons", [])):
+                       self.edit_cmd, self.seg_direction, *self.panels):
             widget.setEnabled(on)
         if not on:
             self.lbl_status.setText(
@@ -421,31 +455,29 @@ class LedPanel(QWidget):
 
     # ================================================================ příjem =
     def _onLine(self, line: str) -> None:
-        color = "#c33" if LedProtocol.is_error(line) else "#37c"
+        color = theme.ACCENT if LedProtocol.is_error(line) else "#2b6cb0"
         self._log(f"« {line}", color)
         if LedProtocol.is_banner(line):
             info = LedProtocol.parse_banner(line)
             self.lbl_status.setText(
-                f"Připojeno k {self.link.port_name()} – firmware {info.get('version', '?')}, "
-                f"{info.get('panels', PANELS)} panely × {info.get('leds', LEDS_PER_PANEL)} LED")
+                f"{self.link.port_name()} · firmware {info.get('version', '?')} · "
+                f"{info.get('panels', PANELS)} × {info.get('leds', LEDS_PER_PANEL)} LED")
             self.link.send(LedProtocol.state())
         elif LedProtocol.parse_state(line, self.state):
             self._applyStateToUi()
 
     def _applyStateToUi(self) -> None:
-        self.chk_master.blockSignals(True)
-        self.slider_master.blockSignals(True)
-        self.spin_master.blockSignals(True)
+        for widget in (self.chk_master, self.slider_master, self.spin_master):
+            widget.blockSignals(True)
         try:
             self.chk_master.setChecked(self.state.master_on)
             self.slider_master.setValue(self.state.master_brightness)
             self.spin_master.setValue(self.state.master_brightness)
         finally:
-            self.chk_master.blockSignals(False)
-            self.slider_master.blockSignals(False)
-            self.spin_master.blockSignals(False)
-        for i, widget in enumerate(self.panels):
-            panel = self.state.panels[i]
+            for widget in (self.chk_master, self.slider_master, self.spin_master):
+                widget.blockSignals(False)
+        for index, widget in enumerate(self.panels):
+            panel = self.state.panels[index]
             widget.setState(panel.on, panel.brightness, panel.color)
 
     # =============================================================== odeslání
@@ -453,9 +485,9 @@ class LedPanel(QWidget):
         if self.link.send(command):
             self._sync_timer.start()
 
-    def _queueBrightness(self, key, command_builder) -> None:
+    def _queueBrightness(self, key, builder) -> None:
         """Posuvník generuje mnoho hodnot – odešleme až tu poslední."""
-        self._pending_brightness[key] = command_builder
+        self._pending_brightness[key] = builder
         self._send_timer.start()
 
     def _flushBrightness(self) -> None:
@@ -479,8 +511,8 @@ class LedPanel(QWidget):
             self._setAllColor(tuple(rgb))
 
     def _pickMasterColor(self) -> None:
-        current = QColor(*self.panels[0].color())
-        chosen = QColorDialog.getColor(current, self, "Barva všech panelů")
+        chosen = QColorDialog.getColor(QColor(*self.panels[0].color()), self,
+                                       "Barva všech stran")
         if chosen.isValid():
             self._setAllColor((chosen.red(), chosen.green(), chosen.blue()))
 
@@ -488,6 +520,13 @@ class LedPanel(QWidget):
         for widget in self.panels:
             widget.setColor(rgb)
         self._send(LedProtocol.all_color(rgb))
+
+    def _onDirection(self, index: int) -> None:
+        if index >= PANELS:
+            self.chk_master.setChecked(True)
+            self._send(LedProtocol.all_power(True))
+        else:
+            self._onSolo(index + 1)
 
     # ------------------------------------------------------------ jednotlivé
     def _onPanelPower(self, index: int, on: bool) -> None:
@@ -516,7 +555,7 @@ class LedPanel(QWidget):
         self._history_pos = len(self._history)
         self.edit_cmd.clear()
 
-    def _log(self, text: str, color: str = "#333") -> None:
+    def _log(self, text: str, color: str = theme.NEUTRAL_700) -> None:
         self.console.appendHtml(
             f'<span style="color:{color}">{_escape(text)}</span>')
         self.console.moveCursor(QTextCursor.End)
@@ -529,4 +568,4 @@ class LedPanel(QWidget):
 
 
 def _escape(text: str) -> str:
-    return (text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

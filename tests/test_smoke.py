@@ -13,6 +13,18 @@ from bmscam.backends import DemoBackend, diagnostics, enumerate_devices  # noqa:
 from bmscam.spec import CATALOG, make_spec  # noqa: E402
 
 
+_APP = None
+
+
+def _app():
+    """Vrátí sdílenou instanci QApplication (drženou po dobu běhu testů)."""
+    global _APP
+    from PyQt5.QtWidgets import QApplication
+    if _APP is None:
+        _APP = QApplication.instance() or QApplication(sys.argv[:1])
+    return _APP
+
+
 def test_diagnostics_lists_all_backends():
     from bmscam.backends import BACKENDS
     lines = diagnostics()
@@ -59,10 +71,9 @@ def test_catalog_groups_are_known():
 
 
 def test_main_window_builds_and_connects():
-    from PyQt5.QtWidgets import QApplication
     from bmscam.ui.main_window import MainWindow
 
-    app = QApplication.instance() or QApplication(sys.argv[:1])
+    app = _app()
     win = MainWindow(prefer_demo=True)
     win.show()
     win.connectCamera()
@@ -106,10 +117,9 @@ def test_led_protocol_parses_replies():
 
 
 def test_led_panel_reflects_board_state():
-    from PyQt5.QtWidgets import QApplication
     from bmscam.ui.led_panel import LedPanel
 
-    app = QApplication.instance() or QApplication(sys.argv[:1])
+    app = _app()
     panel = LedPanel()
     try:
         panel._setConnected(True)
@@ -132,12 +142,11 @@ def test_led_panel_reflects_board_state():
 
 
 def test_serial_link_reports_bad_port():
-    from PyQt5.QtWidgets import QApplication
     from bmscam.serialio import SerialLink, available
 
     if not available():
         return
-    QApplication.instance() or QApplication(sys.argv[:1])
+    _app()
     link = SerialLink()
     errors = []
     link.failed.connect(errors.append)
@@ -154,14 +163,13 @@ def test_serial_roundtrip_against_fake_board():
     import threading
     import time
 
-    from PyQt5.QtWidgets import QApplication
     from bmscam.leds import LedProtocol, LedState
     from bmscam.serialio import SerialLink, available
 
     if not available() or not hasattr(_os, "openpty"):
         return
 
-    app = QApplication.instance() or QApplication(sys.argv[:1])
+    app = _app()
     master_fd, slave_fd = _os.openpty()
     board_stop = threading.Event()
 
@@ -320,6 +328,88 @@ def test_opencv_backend_with_fake_camera():
             sys.modules.pop("cv2", None)
         importlib.reload(importlib.import_module("bmscam.backends.uvc_opencv"))
 
+
+
+
+# ------------------------------------------------------------------ vzhled --
+
+def test_theme_provides_tokens_and_icons():
+    from bmscam.ui import theme
+
+    _app()
+    qss = theme.stylesheet()
+    assert theme.ACCENT in qss and theme.SURFACE in qss
+    assert "border-radius: 0" in qss          # systém je bez zaoblení
+    assert not theme.icon("camera").isNull()
+    assert theme.icon("neexistujici-ikona").isNull()
+
+
+def test_segmented_control_selects_and_clears():
+    from bmscam.ui.widgets import SegmentedControl
+
+    _app()
+    seg = SegmentedControl(["A", "B", "C"])
+    seen = []
+    seg.currentChanged.connect(seen.append)
+    assert seg.currentIndex() == 0
+    seg.setCurrentIndex(2)
+    assert seg.currentIndex() == 2
+    seg.buttons[1].click()
+    assert seen == [1] and seg.currentIndex() == 1
+    seg.clearSelection()
+    assert seg.currentIndex() == -1
+
+    empty = SegmentedControl(["A", "B"], preselect=False)
+    assert empty.currentIndex() == -1
+
+
+def test_side_panel_collapses():
+    from bmscam.ui import theme
+    from bmscam.ui.widgets import SidePanel
+
+    _app()
+    panel = SidePanel("Test", "left")
+    assert panel.width() == theme.PANEL_WIDTH
+    panel.toggle()
+    assert panel.is_collapsed() and panel.width() == theme.PANEL_COLLAPSED
+    assert not panel.body.isVisible()
+    panel.toggle()
+    assert not panel.is_collapsed() and panel.width() == theme.PANEL_WIDTH
+
+
+def test_main_window_view_controls():
+    from bmscam.ui import theme
+    from bmscam.ui.main_window import MainWindow
+
+    app = _app()
+    app.setStyleSheet(theme.stylesheet())
+    win = MainWindow(prefer_demo=True)
+    win.show()
+    win.connectCamera()
+    try:
+        for _ in range(20):
+            app.processEvents()
+        # přepínání panelu osvětlení
+        win.act_leds.setChecked(False)
+        assert win.right_panel.is_collapsed()
+        win.act_leds.setChecked(True)
+        assert not win.right_panel.is_collapsed()
+        # světlé pozadí náhledu
+        win.btn_stage.setChecked(True)
+        assert win.view._light_stage
+        win.btn_stage.setChecked(False)
+        # překryvy
+        win.act_grid.setChecked(True)
+        assert win.view.show_grid
+        # záložky vlastností
+        win.seg_tabs.buttons[2].click()
+        assert win.tabs.currentIndex() == 2
+        # údaje v proužku přes obraz
+        assert "EXP" in win.view._stats
+        win.view.set_recording(65)
+        assert win.view._recording == 65
+    finally:
+        win.close()
 
 
 if __name__ == "__main__":
