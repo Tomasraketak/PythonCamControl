@@ -10,6 +10,12 @@ if not exist ".venv\Scripts\python.exe" (
     ".venv\Scripts\python.exe" -m pip install -r requirements.txt || goto :err
 )
 ".venv\Scripts\python.exe" main.py %*
+if errorlevel 2 (
+    echo.
+    echo Diagnostika Qt:
+    ".venv\Scripts\python.exe" main.py --doctor
+    pause
+)
 goto :eof
 :err
 echo.

@@ -99,6 +99,7 @@ python main.py --connect  # rovnou připojí první nalezenou kameru
 python main.py --demo     # simulovaná kamera, bez hardwaru
 python main.py --no-demo  # v seznamu nabídne jen skutečné kamery
 python main.py --list     # vypíše nalezené kamery a stav SDK a skončí
+python main.py --doctor   # diagnostika Qt, když nejde otevřít okno
 ```
 
 ## Klávesové zkratky
@@ -138,6 +139,38 @@ zleva*), které zvýrazní reliéf vzorku.
 > z pinu 5V na desce. Kompletní schéma zapojení, seznam součástek a popis
 > protokolu najdete v [docs/zapojeni_led.md](docs/zapojeni_led.md).
 
+## Když aplikace nejde spustit
+
+Hláška
+
+```
+qt.qpa.plugin: Could not find the Qt platform plugin "windows" in ""
+```
+
+znamená, že Qt nenašlo své zásuvné moduly (`platforms\qwindows.dll`). Cestu
+k nim ovlivňují proměnné prostředí `QT_PLUGIN_PATH`
+a `QT_QPA_PLATFORM_PLUGIN_PATH` a přepsat je umí kdekterá jiná instalace Qt
+v systému – Anaconda, MSYS2 nebo i balíček `opencv-python`.
+
+Aplikace si proto obě proměnné při startu sama nastaví na adresář patřící
+k nainstalovanému PyQt5 a totéž zopakuje ještě jednou těsně před otevřením
+okna. Když to přesto nestačí:
+
+```bat
+python main.py --doctor
+```
+
+Výpis ukáže, kde Qt hledá a jestli tam soubor `qwindows.dll` je. Podle toho:
+
+* **modul platformy CHYBÍ** – instalace PyQt5 je neúplná:
+  `pip install --force-reinstall PyQt5 PyQt5-Qt5`
+* **PyQt5 NENAINSTALOVÁNO** – `pip install PyQt5`, nebo spouštíte jiný Python,
+  než do kterého jste instalovali (výpis ukazuje cestu k použitému `python.exe`)
+* **cesty ukazují jinam** – v systému máte natvrdo nastavenou proměnnou
+  `QT_PLUGIN_PATH`; zrušte ji a spusťte znovu
+
+Podrobný výpis hledání zapnete přes `set QT_DEBUG_PLUGINS=1 && python main.py`.
+
 ## Když SDK kameru nenajde
 
 Kamera se hlásí i jako běžné UVC zařízení, takže aplikace umí obraz zobrazit
@@ -173,6 +206,7 @@ Stav obou SDK ukáže *Kamera → Diagnostika SDK*.
 main.py                       spouštěč
 bmscam/
     app.py                    zpracování parametrů příkazové řádky
+    qtenv.py                  nalezení knihoven Qt (řeší chybu qwindows.dll)
     spec.py                   katalog vlastností kamery (popisky, rozsahy, skupiny)
     uvcham.py                 modul z originálního SDK (nezměněný)
     toupcam_ctypes.py         binding pro nativní SDK ToupTek

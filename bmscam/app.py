@@ -6,6 +6,7 @@ import sys
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication
 
+from . import qtenv
 from .ui import theme
 from .ui.main_window import APP_NAME, MainWindow
 
@@ -22,11 +23,19 @@ def parse_args(argv=None):
                     help="připojit první nalezenou kameru hned po startu")
     ap.add_argument("--list", action="store_true",
                     help="jen vypsat nalezené kamery a stav SDK a skončit")
+    ap.add_argument("--doctor", action="store_true",
+                    help="vypsat, kde Qt hledá své knihovny (při potížích se spuštěním)")
     return ap.parse_args(argv)
 
 
 def main(argv=None) -> int:
     args = parse_args(argv)
+
+    if args.doctor:
+        print("Prostředí Qt:")
+        for line in qtenv.report():
+            print("  " + line)
+        return 0
 
     if args.list:
         from .backends import diagnostics, enumerate_devices
@@ -45,7 +54,13 @@ def main(argv=None) -> int:
         QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
         QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
-    app = QApplication(sys.argv[:1])
+    qtenv.apply_library_path()
+    try:
+        app = QApplication(sys.argv[:1])
+    except Exception as exc:                      # pragma: no cover – jen Qt
+        print(f"Chyba při startu Qt: {exc}", file=sys.stderr)
+        print(qtenv.HELP_TEXT, file=sys.stderr)
+        return 2
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("BMS")
     app.setStyle("Fusion")

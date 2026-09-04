@@ -7,7 +7,8 @@ import os
 import sys
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
 
 from bmscam.backends import DemoBackend, diagnostics, enumerate_devices  # noqa: E402
 from bmscam.spec import CATALOG, make_spec  # noqa: E402
@@ -410,6 +411,43 @@ def test_main_window_view_controls():
         assert win.view._recording == 65
     finally:
         win.close()
+
+
+# ------------------------------------------------------------- prostředí Qt --
+
+def test_qtenv_points_at_pyqt_plugins():
+    """qtenv nasměruje Qt na zásuvné moduly, které patří k PyQt5."""
+    import os
+    from bmscam import qtenv
+
+    directory = qtenv.plugins_dir()
+    assert directory and os.path.isdir(os.path.join(directory, "platforms"))
+    assert qtenv.prepare() == directory
+    assert os.environ["QT_PLUGIN_PATH"] == directory
+    assert os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] == \
+        os.path.join(directory, "platforms")
+
+    qtenv.apply_library_path()
+    from PyQt5.QtCore import QCoreApplication
+    assert directory in QCoreApplication.libraryPaths()
+
+    text = "\n".join(qtenv.report())
+    assert "PyQt5" in text and "QT_QPA_PLATFORM_PLUGIN_PATH" in text
+
+
+def test_opencv_import_is_deferred():
+    """Modul cv2 se nesmí načíst při pouhém importu aplikace.
+
+    Import cv2 ve Windows přepíše cesty k zásuvným modulům Qt, což aplikaci
+    znemožní otevřít okno."""
+    import subprocess
+
+    code = ("import sys, bmscam.app;"
+            " import bmscam.backends.uvc_opencv as u;"
+            " print('cv2' in sys.modules or u._import_done)")
+    out = subprocess.run([sys.executable, "-c", code], cwd=_ROOT,
+                         capture_output=True, text=True)
+    assert out.stdout.strip() == "False", out.stdout + out.stderr
 
 
 if __name__ == "__main__":

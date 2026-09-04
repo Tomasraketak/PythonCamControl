@@ -18,13 +18,29 @@ from typing import Dict, List, Optional, Tuple
 from ..spec import DeviceInfo, KIND_CHECK, PropSpec, make_spec
 from .base import EVENT_ERROR, EVENT_IMAGE, CameraBackend, CameraError, Frame
 
-try:
-    import cv2
-    IMPORT_ERROR = ""
-except ImportError as exc:
-    cv2 = None
-    IMPORT_ERROR = (f"OpenCV není nainstalované ({exc}). "
-                    "Nainstalujte jej příkazem:  pip install opencv-python")
+#: modul `cv2` se načítá až při prvním použití – schválně.
+#: Import `cv2` totiž ve Windows přidá do PATH vlastní knihovny Qt a přepíše
+#: proměnnou QT_QPA_PLATFORM_PLUGIN_PATH, takže by se aplikaci rozbilo
+#: hledání zásuvných modulů Qt. Takhle k tomu dojde až po startu okna.
+cv2 = None
+IMPORT_ERROR = ""
+_import_done = False
+
+
+def _load_cv2():
+    """Načte OpenCV při prvním použití; vrátí modul, nebo None."""
+    global cv2, IMPORT_ERROR, _import_done
+    if _import_done:
+        return cv2
+    _import_done = True
+    try:
+        import cv2 as _module
+    except ImportError as exc:
+        IMPORT_ERROR = (f"OpenCV není nainstalované ({exc}). "
+                        "Nainstalujte jej příkazem:  pip install opencv-python")
+    else:
+        cv2 = _module
+    return cv2
 
 #: kolik indexů zařízení se při hledání vyzkouší
 MAX_PROBE = 4
@@ -100,19 +116,20 @@ class OpenCvBackend(CameraBackend):
     # ------------------------------------------------------------ discovery -
     @classmethod
     def available(cls) -> bool:
-        return cv2 is not None
+        return _load_cv2() is not None
 
     @classmethod
     def unavailable_reason(cls) -> str:
+        _load_cv2()
         return IMPORT_ERROR
 
     @classmethod
     def sdk_version(cls) -> str:
-        return f"OpenCV {cv2.__version__}" if cv2 else ""
+        return f"OpenCV {cv2.__version__}" if _load_cv2() else ""
 
     @classmethod
     def enumerate(cls) -> List[DeviceInfo]:
-        if cv2 is None:
+        if _load_cv2() is None:
             return []
         found = []
         for index in range(MAX_PROBE):
@@ -132,7 +149,7 @@ class OpenCvBackend(CameraBackend):
 
     @classmethod
     def open(cls, device_id: Optional[str]) -> "OpenCvBackend":
-        if cv2 is None:
+        if _load_cv2() is None:
             raise CameraError(IMPORT_ERROR)
         try:
             index = int(device_id) if device_id is not None else 0
