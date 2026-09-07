@@ -20,17 +20,19 @@ from PyQt5.QtWidgets import (QAction, QComboBox, QDialog, QDialogButtonBox,
 from ..backends import (EVENT_DISCONNECT, EVENT_ERROR, EVENT_IMAGE,
                         CameraBackend, CameraError, diagnostics,
                         enumerate_devices, open_device)
-from .. import videocheck
+from .. import darkfield, videocheck
 from ..spec import (GROUP_ORDER, GROUP_TITLES, GROUP_TOOLTIPS, KIND_ACTION,
                     KIND_READONLY, DeviceInfo, PropSpec)
 from . import theme
 from .controls import PropertyPanel
+from .darkfield_panel import DarkFieldPanel
 from .led_panel import LedPanel
 from .video_view import VideoView
 from .widgets import (Card, SegmentedControl, SidePanel, Tag, button, hline,
                       icon_button, label, row, vline)
 
 APP_NAME = "BMS Cam Control"
+DARKFIELD_TITLE = "Dark"
 VIDEO_FILTER = "MP4 (*.mp4);;Matroska (*.mkv);;ASF (*.asf)"
 
 
@@ -61,6 +63,8 @@ class MainWindow(QMainWindow):
         self._record_path: Optional[str] = None
         self._timelapse_count = 0
         self._timelapse_dir: Optional[str] = None
+        self._bias_collector = None       # sběr referenčních snímků
+        self._df_pending = False          # čeká se na snímek k rozboru
 
         self.save_dir = self.settings.value(
             "save_dir", os.path.join(os.path.expanduser("~"), "BMSCam"))
@@ -76,7 +80,12 @@ class MainWindow(QMainWindow):
         self.timelapse_timer = QTimer(self)
         self.timelapse_timer.timeout.connect(self._onTimelapse)
 
+        self.df_timer = QTimer(self)
+        self.df_timer.timeout.connect(self._requestSample)
+
         self.view.um_per_px = float(self.settings.value("um_per_px", 1.0))
+        self.df_panel.setSaveDir(self.save_dir)
+        self.df_panel.setScaleInfo(self.view.um_per_px)
         self.refreshDevices()
         self.refreshProfiles()
         self._updateEnabled()
@@ -306,13 +315,23 @@ class MainWindow(QMainWindow):
         card.add(self.lbl_info)
         panel.add(card)
 
-        self.seg_tabs = SegmentedControl([GROUP_TITLES[g] for g in GROUP_ORDER],
-                                         compact=True)
+        self.seg_tabs = SegmentedControl(
+            [GROUP_TITLES[g] for g in GROUP_ORDER] + [DARKFIELD_TITLE],
+            compact=True)
         self.seg_tabs.currentChanged.connect(lambda i: self.tabs.setCurrentIndex(i))
         panel.add(self.seg_tabs)
 
         self.tabs = QStackedWidget()
         self.tabs.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        self.df_panel = DarkFieldPanel()
+        self.df_panel.biasRequested.connect(self.startBiasCapture)
+        self.df_panel.measureToggled.connect(self._onDarkFieldToggled)
+        self.df_panel.sampleRequested.connect(lambda: self._requestSample(True))
+        self.df_scroll = QScrollArea()
+        self.df_scroll.setWidgetResizable(True)
+        self.df_scroll.setFrameShape(QScrollArea.NoFrame)
+        self.df_scroll.setWidget(self.df_panel)
+        self.tabs.addWidget(self.df_scroll)
         panel.add(self.tabs)
         panel.add(hline())
 
@@ -437,6 +456,9 @@ class MainWindow(QMainWindow):
         # soubor bez rejstříku a nepůjde přehrát.
         if self.isRecording():
             self.stopRecording(verify=False)
+        self.df_panel.stopMeasuring()
+        self._bias_collector = None
+        self._df_pending = False
         if self.camera is not None:
             try:
                 self.camera.close()
@@ -466,8 +488,10 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------- panely ---
     def _buildPanels(self) -> None:
-        while self.tabs.count():
-            widget = self.tabs.widget(0)
+        for index in reversed(range(self.tabs.count())):
+            widget = self.tabs.widget(index)
+            if widget is self.df_scroll:      # Dark Field drží data, ten zůstává
+                continue
             self.tabs.removeWidget(widget)
             widget.deleteLater()
         self.panels.clear()
@@ -483,9 +507,11 @@ class MainWindow(QMainWindow):
             scroll.setWidgetResizable(True)
             scroll.setFrameShape(QScrollArea.NoFrame)
             scroll.setWidget(panel)
-            self.tabs.addWidget(scroll)
+            self.tabs.insertWidget(position, scroll)
             self.seg_tabs.buttons[position].setEnabled(bool(specs))
             self.seg_tabs.buttons[position].setToolTip(GROUP_TOOLTIPS[group])
+        self.seg_tabs.buttons[len(GROUP_ORDER)].setToolTip(
+            "Sledování kontaminace witness sklíčka v temném poli")
         self.seg_tabs.setCurrentIndex(0)
         self.tabs.setCurrentIndex(0)
 
@@ -583,6 +609,8 @@ class MainWindow(QMainWindow):
             return
         self._frames += 1
         self._frames_total += 1
+        if self._bias_collector is not None or self._df_pending:
+            self._darkFieldFrame(frame)
         now = time.time()
         if now - self._last_paint < 0.03:      # náhled max ~33 fps
             return
@@ -598,6 +626,95 @@ class MainWindow(QMainWindow):
         if fmt == QImage.Format_RGB888 and order == "bgr":
             image = image.rgbSwapped()         # starší Qt bez Format_BGR888
         return image
+
+    # ============================================================ dark field =
+    def _grayFrame(self, frame):
+        """Šedotónová podoba snímku pro rozbor."""
+        return darkfield.to_gray(frame, getattr(self.camera, "pixel_order", "rgb"))
+
+    def _darkFieldRoi(self):
+        """Výřez v souřadnicích obrazu, pokud si ho uživatel vybral."""
+        if not self.df_panel.wantsRoi():
+            return None
+        rect = self.view.roi()
+        if rect.isNull() or rect.width() < 2 or rect.height() < 2:
+            return None
+        return (rect.x(), rect.y(), rect.width(), rect.height())
+
+    def startBiasCapture(self, frames: int) -> None:
+        """Začne sbírat snímky čistého sklíčka do referenčního snímku."""
+        if self.camera is None or not self.camera.is_running():
+            QMessageBox.information(self, APP_NAME,
+                                    "Nejdřív připojte kameru a spusťte obraz.")
+            return
+        self._bias_collector = darkfield.BiasCollector(frames)
+        self.df_panel.setBiasProgress(0, frames)
+        self.statusMessage("Snímám referenci čistého sklíčka…", 4000)
+
+    def _onDarkFieldToggled(self, on: bool, interval: float) -> None:
+        if on:
+            if self.camera is None or not self.camera.is_running():
+                QMessageBox.information(self, APP_NAME,
+                                        "Nejdřív připojte kameru a spusťte obraz.")
+                self.df_panel.stopMeasuring()
+                return
+            self.df_timer.start(max(200, int(interval * 1000)))
+            self._requestSample()          # první měření hned, ne až za interval
+            self.statusMessage(f"Měření kontaminace běží po {interval:g} s", 4000)
+        else:
+            self.df_timer.stop()
+            self._df_pending = False
+            self.statusMessage("Měření kontaminace zastaveno", 3000)
+
+    def _requestSample(self, announce: bool = False) -> None:
+        """Označí, že se má vyhodnotit nejbližší příchozí snímek."""
+        if self.camera is None or not self.camera.is_running():
+            if announce:
+                QMessageBox.information(self, APP_NAME,
+                                        "Není k dispozici žádný obraz.")
+            return
+        self._df_pending = True
+
+    def _darkFieldFrame(self, frame) -> None:
+        """Zpracuje snímek: buď do reference, nebo jako měření.
+
+        Běží uvnitř zpracování snímku, kdy jsou data čerstvá a nikdo je
+        zatím nepřepsal."""
+        try:
+            gray = self._grayFrame(frame)
+        except Exception as exc:                       # noqa: BLE001
+            self._df_pending = False
+            self._bias_collector = None
+            self.statusMessage(f"Rozbor obrazu selhal: {exc}")
+            return
+
+        collector = self._bias_collector
+        if collector is not None:
+            try:
+                done = collector.add(darkfield.crop(gray, self._darkFieldRoi()))
+            except ValueError as exc:
+                self._bias_collector = None
+                QMessageBox.warning(self, APP_NAME, str(exc))
+                return
+            self.df_panel.setBiasProgress(collector.taken, collector.count)
+            if done:
+                self._bias_collector = None
+                self.df_panel.setBias(collector.result())
+                self.statusMessage("Reference pořízena", 4000)
+            return
+
+        if not self._df_pending:
+            return
+        self._df_pending = False
+        settings = self.df_panel.settings(self._darkFieldRoi())
+        try:
+            metrics = darkfield.analyze(
+                darkfield.crop(gray, settings.roi), self.df_panel.bias, settings)
+        except ValueError as exc:
+            self.df_panel.stopMeasuring()
+            QMessageBox.warning(self, APP_NAME, str(exc))
+            return
+        self.df_panel.addSample(metrics)
 
     # ============================================================ vlastnosti =
     def _onPropChanged(self, key: str, value: int) -> None:
@@ -876,6 +993,7 @@ class MainWindow(QMainWindow):
         if path:
             self.save_dir = path
             self.settings.setValue("save_dir", path)
+            self.df_panel.setSaveDir(path)
             self._updateDirLabel()
             self.refreshProfiles()
 
@@ -1030,6 +1148,7 @@ class MainWindow(QMainWindow):
         if dialog.exec_() == QDialog.Accepted:
             self.view.um_per_px = dialog.value()
             self.settings.setValue("um_per_px", self.view.um_per_px)
+            self.df_panel.setScaleInfo(self.view.um_per_px)
             self.act_scale.setChecked(True)
             self._onOverlay()
 
@@ -1128,6 +1247,7 @@ class MainWindow(QMainWindow):
     # ================================================================ zavření
     def closeEvent(self, event) -> None:
         self.timelapse_timer.stop()
+        self.df_timer.stop()
         self.ui_timer.stop()
         self.led_panel.shutdown()
         self.disconnectCamera()

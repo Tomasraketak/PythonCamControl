@@ -80,7 +80,7 @@ def test_main_window_builds_and_connects():
     win.connectCamera()
     try:
         assert win.camera is not None
-        assert win.tabs.count() == 5
+        assert win.tabs.count() == 6          # 5 skupin vlastností + Dark Field
         for _ in range(20):
             app.processEvents()
         win._onPropChanged("contrast", 25)
@@ -355,8 +355,11 @@ def test_segmented_control_selects_and_clears():
     assert seg.currentIndex() == 0
     seg.setCurrentIndex(2)
     assert seg.currentIndex() == 2
+    assert seen == [2]                   # i programové přepnutí se ohlásí
+    seg.setCurrentIndex(2)
+    assert seen == [2]                   # ale jen když se něco změní
     seg.buttons[1].click()
-    assert seen == [1] and seg.currentIndex() == 1
+    assert seen == [2, 1] and seg.currentIndex() == 1
     seg.clearSelection()
     assert seg.currentIndex() == -1
 
@@ -657,6 +660,250 @@ def test_timelapse_uses_its_own_folder():
         win.close()
         import shutil as _shutil
         _shutil.rmtree(workdir, ignore_errors=True)
+
+
+# ------------------------------------------------------------ dark field --
+
+def _speckled(rng, shape=(240, 320), level=8.0, noise=1.5, spots=0,
+              radius=3, amplitude=60.0):
+    """Snímek tmavého pole: tmavé pozadí a na něm svítící částice."""
+    import numpy as np
+    img = level + rng.normal(0, noise, shape)
+    yy, xx = np.ogrid[:shape[0], :shape[1]]
+    for y, x in zip(rng.integers(15, shape[0] - 15, spots),
+                    rng.integers(15, shape[1] - 15, spots)):
+        img[(yy - y) ** 2 + (xx - x) ** 2 <= radius * radius] += amplitude
+    return img.astype("float32")
+
+
+def test_darkfield_counts_contamination():
+    """Víc částic = větší pokrytí; čisté sklíčko vyjde jako nula."""
+    import numpy as np
+    from bmscam import darkfield as df
+
+    rng = np.random.default_rng(42)
+    collector = df.BiasCollector(5)
+    while not collector.add(_speckled(rng)):
+        pass
+    bias = collector.result()
+    assert bias.frames == 5
+    assert 6.0 < bias.level < 10.0
+
+    settings = df.Settings(sigma=5.0, min_area_px=4, um_per_px=0.5)
+    clean = df.analyze(_speckled(rng), bias, settings)
+    assert clean["coverage_pct"] < 0.01
+
+    few = df.analyze(_speckled(rng, spots=5), bias, settings)
+    many = df.analyze(_speckled(rng, spots=20), bias, settings)
+    assert few["coverage_pct"] > clean["coverage_pct"]
+    assert many["coverage_pct"] > 3 * few["coverage_pct"]
+    assert many["particle_area_px"] > few["particle_area_px"]
+    assert many["area_um2"] == many["particle_area_px"] * 0.25
+    assert 50 < few["mean_signal"] < 70          # jas přidaných částic
+
+    try:
+        import cv2                               # noqa: F401
+    except ImportError:
+        assert few["particles"] == -1            # bez OpenCV se nepočítají
+    else:
+        assert few["particles"] == 5 and many["particles"] == 20
+
+
+def test_darkfield_threshold_modes_and_bias_mismatch():
+    import numpy as np
+    from bmscam import darkfield as df
+
+    rng = np.random.default_rng(7)
+    collector = df.BiasCollector(3)
+    while not collector.add(_speckled(rng)):
+        pass
+    bias = collector.result()
+
+    frame = _speckled(rng, spots=10)
+    strict = df.analyze(frame, bias, df.Settings(sigma=20.0, min_area_px=1))
+    loose = df.analyze(frame, bias, df.Settings(sigma=2.0, min_area_px=1))
+    assert loose["coverage_pct"] >= strict["coverage_pct"]
+    assert loose["threshold"] < strict["threshold"]
+
+    absolute = df.analyze(frame, bias, df.Settings(
+        threshold_mode=df.THRESHOLD_ABSOLUTE, absolute=30.0, min_area_px=1))
+    assert abs(absolute["threshold"] - 30.0) < 1e-6
+
+    # bez reference se použije medián snímku, nespadne to
+    assert df.analyze(frame, None, df.Settings())["coverage_pct"] > 0
+
+    # jiné rozlišení než reference musí být srozumitelná chyba
+    try:
+        df.analyze(_speckled(rng, shape=(100, 100)), bias, df.Settings())
+    except ValueError as exc:
+        assert "rozlišení" in str(exc)
+    else:
+        raise AssertionError("nesouhlasné rozlišení mělo skončit chybou")
+
+
+def test_darkfield_bias_survives_save_and_load():
+    import tempfile
+    import numpy as np
+    from bmscam import darkfield as df
+
+    rng = np.random.default_rng(3)
+    bias = df.Bias(_speckled(rng), frames=9)
+    with tempfile.NamedTemporaryFile(suffix=".npz", delete=False) as fh:
+        path = fh.name
+    try:
+        bias.save(path)
+        loaded = df.Bias.load(path)
+        assert loaded.frames == 9
+        assert loaded.shape == bias.shape
+        assert np.allclose(loaded.mean, bias.mean)
+    finally:
+        os.unlink(path)
+
+
+def test_darkfield_series_and_csv():
+    import csv as _csv
+    import tempfile
+    from datetime import datetime, timedelta
+    from bmscam import darkfield as df
+
+    series = df.Series()
+    start = datetime(2026, 9, 7, 8, 0, 0)
+    for i in range(5):
+        series.add({"coverage_pct": 0.1 * i, "particles": i,
+                    "particle_area_px": 10 * i, "area_um2": 2.5 * i,
+                    "mean_signal": 50.0, "max_signal": 60.0,
+                    "bg_sigma": 1.5, "threshold": 9.0},
+                   start + timedelta(seconds=60 * i))
+    assert len(series) == 5
+    assert series.values("time_s") == [0.0, 60.0, 120.0, 180.0, 240.0]
+    assert abs(series.rate_per_minute() - 0.1) < 1e-6     # 0,1 % za minutu
+
+    with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as fh:
+        path = fh.name
+    try:
+        series.to_csv(path, df.Settings(sigma=4.0), None)
+        with open(path, encoding="utf-8-sig", newline="") as fh:
+            rows = list(_csv.reader(fh, delimiter=";"))
+        # zakomentované řádky s nastavením poznáme podle "# " na začátku;
+        # samotné "#" je název prvního sloupce tabulky
+        notes = [r for r in rows if r and r[0].startswith("# ")]
+        data = [r for r in rows if r and not r[0].startswith("# ")]
+        assert any("sigma" in r[0] for r in notes)        # nastavení je v hlavičce
+        assert len(data) == 6                             # záhlaví + 5 řádků
+        assert data[0][0] == "#" and "Pokrytí" in data[0][3]
+        assert data[-1][1] == "240.00"
+    finally:
+        os.unlink(path)
+
+    series.clear()
+    assert len(series) == 0 and series.rate_per_minute() == 0.0
+
+
+def test_darkfield_gray_conversion():
+    """Z RGB888 snímku se vytáhne šedotónové pole i při zarovnaném řádku."""
+    import numpy as np
+    from bmscam import darkfield as df
+
+    width, height = 5, 3
+    stride = width * 3 + 4                      # zarovnání jako v SDK
+    raw = bytearray(stride * height)
+    for y in range(height):
+        for x in range(width):
+            value = 10 * y + x
+            for channel in range(3):
+                raw[y * stride + x * 3 + channel] = value
+
+    class _Frame:
+        pass
+    frame = _Frame()
+    frame.data, frame.width, frame.height, frame.stride = raw, width, height, stride
+
+    gray = df.to_gray(frame)
+    assert gray.shape == (height, width)
+    assert gray[2, 4] == 24 and gray[0, 0] == 0
+    assert df.crop(gray, (1, 1, 3, 2)).shape == (2, 3)
+    assert df.crop(gray, None).shape == (height, width)
+
+
+def test_darkfield_panel_flow():
+    """Panel: reference, měření, tabulka, souhrn."""
+    import numpy as np
+    from bmscam import darkfield as df
+    from bmscam.ui.darkfield_panel import DarkFieldPanel
+
+    app = _app()
+    panel = DarkFieldPanel()
+    try:
+        assert panel.bias is None
+        assert "Není pořízen" in panel.lbl_bias.text()
+
+        rng = np.random.default_rng(11)
+        panel.setBias(df.Bias(_speckled(rng), frames=4))
+        assert "4 snímků" in panel.lbl_bias.text()
+        assert panel.btn_bias_save.isEnabled()
+
+        settings = panel.settings()
+        assert settings.threshold_mode == df.THRESHOLD_SIGMA
+        panel.seg_mode.setCurrentIndex(1)
+        assert panel.settings().threshold_mode == df.THRESHOLD_ABSOLUTE
+        assert panel.spin_sigma.isEnabled() is False
+
+        for i in range(3):
+            panel.addSample({"coverage_pct": 0.5 * i, "particles": i,
+                             "particle_area_px": i, "area_um2": 0.0,
+                             "mean_signal": 1.0, "max_signal": 2.0,
+                             "bg_sigma": 1.0, "threshold": 5.0})
+        assert len(panel.series) == 3
+        assert "3 měření" in panel.summaryText()
+        assert "(3)" in panel.btn_table.text()
+
+        panel.showTable()
+        assert panel.window_.table.rowCount() == 3
+        assert panel.window_.table.item(2, 3).text() == "1.0000"
+
+        panel.clearSeries()
+        assert len(panel.series) == 0
+        assert panel.window_.table.rowCount() == 0
+    finally:
+        if panel.window_ is not None:
+            panel.window_.close()
+        panel.deleteLater()
+
+
+def test_main_window_darkfield_measures_from_camera():
+    """Celý řetěz: snímek z kamery → reference → měření → řádek tabulky."""
+    import time as _time
+    from bmscam.ui.main_window import MainWindow
+
+    app = _app()
+    win = MainWindow(prefer_demo=True)
+    win.connectCamera()
+    try:
+        deadline = _time.time() + 5.0
+        while _time.time() < deadline and not win.view.hasImage():
+            app.processEvents()
+            _time.sleep(0.02)
+        assert win.view.hasImage()
+
+        win.startBiasCapture(3)
+        deadline = _time.time() + 5.0
+        while _time.time() < deadline and win._bias_collector is not None:
+            app.processEvents()
+            _time.sleep(0.01)
+        assert win.df_panel.bias is not None
+        assert win.df_panel.bias.frames == 3
+
+        win._requestSample()
+        deadline = _time.time() + 5.0
+        while _time.time() < deadline and win._df_pending:
+            app.processEvents()
+            _time.sleep(0.01)
+        assert len(win.df_panel.series) == 1
+        sample = win.df_panel.series.samples[0]
+        assert sample.threshold > 0
+        assert sample.coverage_pct >= 0.0
+    finally:
+        win.close()
 
 
 if __name__ == "__main__":

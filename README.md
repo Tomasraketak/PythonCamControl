@@ -34,6 +34,12 @@ Zdrojový návrh je v [docs/design](docs/design/).
   v pracovní složce a snímky v ní čísluje (`snimek_0001_…jpg`), takže se
   jednotlivé série nemíchají dohromady. Po skončení nahrávání se soubor
   automaticky zkontroluje a aplikace upozorní, když s ním něco není v pořádku.
+* **Dark Field** – záložka pro sledování kontaminace witness sklíčka
+  v temném poli: referenční snímek čistého sklíčka (průměr z N snímků,
+  uložitelný do souboru), pravidelné měření v nastavitelném intervalu,
+  práh podle šumu (σ) nebo pevný, filtr nejmenší částice, volitelně jen
+  ve vybraném výřezu. Výsledky se zapisují do tabulky s grafem průběhu
+  a dají se uložit do CSV. Podrobně v [docs/darkfield.md](docs/darkfield.md).
 * **Měřicí překryvy** – mřížka třetin, nitkový kříž a kalibrovatelné měřítko
   v mikrometrech (*Zobrazení → Kalibrace měřítka*).
 * **Přesné hodnoty** – u každé veličiny je vedle posuvníku i vstupní pole.
@@ -247,6 +253,7 @@ bmscam/
     app.py                    zpracování parametrů příkazové řádky
     qtenv.py                  nalezení knihoven Qt (řeší chybu qwindows.dll)
     videocheck.py             rozbor nahraného videa (proč nejde přehrát)
+    darkfield.py              rozbor kontaminace v temném poli (bez Qt)
     spec.py                   katalog vlastností kamery (popisky, rozsahy, skupiny)
     uvcham.py                 modul z originálního SDK (nezměněný)
     toupcam_ctypes.py         binding pro nativní SDK ToupTek
@@ -267,9 +274,11 @@ bmscam/
         controls.py           ovládací prvky generované z popisu vlastností
         video_view.py         plocha s obrazem, zoom, překryvy, výběr ROI
         led_panel.py          panel osvětlení (Arduino)
+        darkfield_panel.py    záložka Dark Field – tabulka a graf kontaminace
 arduino/bms_led_controller/   sketch pro Arduino Mega (FastLED)
 tests/test_smoke.py           testy bez hardwaru
 docs/zapojeni_led.md          zapojení osvětlení a popis protokolu
+docs/darkfield.md             postup měření kontaminace v temném poli
 docs/design/                  zdrojový návrh rozhraní a jeho design system
 docs/uvcham.h                 hlavičkový soubor SDK (reference)
 ```
