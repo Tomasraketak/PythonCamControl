@@ -67,6 +67,11 @@ class MainWindow(QMainWindow):
         self._df_pending = False          # čeká se na snímek k rozboru
         self._df_store = None             # složka se snímky pro zpětný rozbor
         self._df_last_bias_frame = 0.0    # kdy naposled šel snímek do reference
+        self._mc_queue: List[str] = []    # kanály, které v cyklu ještě zbývají
+        self._mc_channel = ""             # kanál, který se právě snímá
+        self._mc_mode = ""                # "measure" / "bias" / "" = neběží
+        self._mc_base = {}                # expozice a ostření před cyklem
+        self._mc_led_color = None         # barva osvětlení před cyklem
 
         self.save_dir = self.settings.value("save_dir",
                                             workspace.default_save_dir())
@@ -478,6 +483,9 @@ class MainWindow(QMainWindow):
         self.df_panel.stopMeasuring()
         self.df_runner.cancelBias()
         self._df_pending = False
+        self._mc_queue = []
+        self._mc_mode = ""
+        self._mc_channel = ""
         if self.camera is not None:
             try:
                 self.camera.close()
@@ -667,17 +675,131 @@ class MainWindow(QMainWindow):
                                     "Nejdřív připojte kameru a spusťte obraz.")
             return
         self._df_last_bias_frame = 0.0
+        self._bias_frames = frames
+        if self.df_panel.isMultichannel():
+            if not self._startChannelCycle("bias"):
+                return
+            self.statusMessage("Snímám referenci po kanálech…", 4000)
+            return
         self.df_runner.startBias(frames)
         self.statusMessage("Snímám referenci čistého sklíčka…", 4000)
 
     def _onBiasReady(self, bias) -> None:
-        self.df_panel.setBias(bias)
+        self.df_panel.setBias(bias, self._mc_channel)
+        if self._mc_mode == "bias":
+            self._nextChannel()
+            return
         self.statusMessage("Reference pořízena", 4000)
 
     def _onDarkFieldSample(self, metrics, when) -> None:
         self.df_panel.addSample(metrics, when)
         if self._df_store is not None:
             self.df_panel.setStoreInfo(self._df_store)
+        if self._mc_mode == "measure":
+            self._nextChannel()
+
+    # ------------------------------------------------- měření po kanálech ---
+    def _startChannelCycle(self, mode: str) -> bool:
+        """Rozjede cyklus R → G → B. Vrací False, když to nejde."""
+        if self.camera is None or not self.camera.is_running():
+            QMessageBox.information(self, APP_NAME,
+                                    "Nejdřív připojte kameru a spusťte obraz.")
+            return False
+        if not self.led_panel.link.is_open():
+            QMessageBox.information(
+                self, APP_NAME,
+                "Měření po kanálech potřebuje osvětlení přes Arduino – "
+                "jednotlivé barvy rozsvěcí ono.\n\nPřipojte desku v panelu "
+                "osvětlení, nebo režim vypněte.")
+            self.df_panel.stopMeasuring()
+            return False
+        if self._mc_mode:
+            return False                      # cyklus už běží, nepřekrývat
+        try:
+            auto = self.camera.get("aexpo") if "aexpo" in self.specs else 0
+        except Exception:
+            auto = 0
+        if auto:
+            # Násobky expozice se počítají z hodnoty naměřené na začátku
+            # cyklu. Se zapnutou automatikou se ta hodnota mění sama, takže
+            # by násobek neznamenal vůbec nic a po cyklu by se nebylo kam
+            # vracet.
+            QMessageBox.information(
+                self, APP_NAME,
+                "Měření po kanálech potřebuje ruční expozici.\n\n"
+                "Zapnutá automatika mění expoziční čas sama, takže by "
+                "násobky u jednotlivých barev neplatily. Vypněte ji "
+                "v záložce Expozice a nastavte čas ručně.")
+            self.df_panel.stopMeasuring()
+            return False
+
+        self._mc_mode = mode
+        self._mc_queue = list(darkfield.CHANNEL_ORDER)
+        self._mc_base = {}
+        for key in ("expotime", "afposition"):
+            if key in self.specs:
+                try:
+                    self._mc_base[key] = self.camera.get(key)
+                except Exception:
+                    pass
+        self._mc_led_color = self.led_panel.panels[0].color()
+        self._nextChannel()
+        return True
+
+    def _nextChannel(self) -> None:
+        """Přepne na další kanál, nebo cyklus ukončí."""
+        if not self._mc_queue:
+            self._finishChannelCycle()
+            return
+        self._mc_channel = self._mc_queue.pop(0)
+        settings = self.df_panel.settings(self._darkFieldRoi())
+        self._applyChannel(self._mc_channel, settings)
+        # Po přepnutí barvy i expozice musí projít pár snímků, než se to
+        # v obrazu projeví – teprve pak má smysl měřit.
+        QTimer.singleShot(max(50, int(settings.settle_ms)), self._armChannel)
+
+    def _applyChannel(self, channel: str, settings) -> None:
+        """Rozsvítí kanál a nastaví jeho expozici a ostření."""
+        self.led_panel.setAllColor(darkfield.CHANNEL_COLORS[channel])
+        base = self._mc_base
+        if "expotime" in base and "expotime" in self.specs:
+            scale = float(settings.exposure_scale.get(channel, 1.0))
+            self._setClamped("expotime", int(round(base["expotime"] * scale)))
+        offset = int(settings.focus_offset.get(channel, 0))
+        if offset and "afposition" in base and "afposition" in self.specs:
+            self._setClamped("afposition", base["afposition"] + offset)
+
+    def _setClamped(self, key: str, value: int) -> None:
+        spec = self.specs.get(key)
+        if spec is not None:
+            value = max(spec.minimum, min(int(value), spec.maximum))
+        try:
+            self.camera.set(key, int(value))
+        except Exception:
+            pass
+
+    def _armChannel(self) -> None:
+        """Osvětlení i expozice se ustálily – teď se snímá."""
+        if not self._mc_mode:
+            return
+        if self._mc_mode == "bias":
+            self._df_last_bias_frame = 0.0
+            self.df_runner.startBias(self._bias_frames)
+        else:
+            self._df_pending = True
+
+    def _finishChannelCycle(self) -> None:
+        """Vrátí expozici, ostření i barvu osvětlení do původního stavu."""
+        mode, self._mc_mode = self._mc_mode, ""
+        self._mc_channel = ""
+        for key, value in self._mc_base.items():
+            self._setClamped(key, value)
+        if self._mc_led_color is not None:
+            self.led_panel.setAllColor(self._mc_led_color)
+            self._mc_led_color = None
+        self._loadValues()
+        if mode == "bias":
+            self.statusMessage("Reference pořízena pro všechny tři kanály", 5000)
 
     def _onDarkFieldFailed(self, message: str) -> None:
         self._df_pending = False
@@ -708,6 +830,9 @@ class MainWindow(QMainWindow):
         else:
             self.df_timer.stop()
             self._df_pending = False
+            if self._mc_mode:
+                self._mc_queue = []
+                self._finishChannelCycle()
             if self.df_runner.dropped:
                 self.statusMessage(
                     "Měření zastaveno – {} snímků se nestihlo zpracovat, "
@@ -731,6 +856,11 @@ class MainWindow(QMainWindow):
             if announce:
                 QMessageBox.information(self, APP_NAME,
                                         "Není k dispozici žádný obraz.")
+            return
+        if self.df_panel.isMultichannel():
+            if self._mc_mode:
+                return          # předchozí cyklus ještě běží, tenhle vynecháme
+            self._startChannelCycle("measure")
             return
         self._df_pending = True
 
@@ -767,8 +897,9 @@ class MainWindow(QMainWindow):
         # Do archivu jde vždycky celý snímek, ne jen výřez – zpětný rozbor
         # si pak může vybrat jinou oblast.
         store = None if collecting else self._df_store
-        if self.df_runner.submit(gray, self.df_panel.bias, settings,
-                                 datetime.now(), store):
+        bias = self.df_panel.bias.get(self._mc_channel)
+        if self.df_runner.submit(gray, bias, settings, datetime.now(), store,
+                                 self._mc_channel):
             if not collecting:
                 self._df_pending = False
 

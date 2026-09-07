@@ -608,6 +608,10 @@ class LedPanel(QWidget):
         if chosen.isValid():
             self._setAllColor((chosen.red(), chosen.green(), chosen.blue()))
 
+    def setAllColor(self, rgb) -> None:
+        """Veřejná cesta k obarvení všech stran (používá měření po kanálech)."""
+        self._setAllColor(tuple(int(c) for c in rgb)[:3])
+
     def _setAllColor(self, rgb) -> None:
         for widget in self.panels:
             widget.setColor(rgb)

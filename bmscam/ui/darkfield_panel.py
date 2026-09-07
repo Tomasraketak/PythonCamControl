@@ -38,10 +38,20 @@ class TrendChart(QWidget):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._times: List[float] = []
         self._values: List[float] = []
+        self._lines = []
         self._title = ""
 
     def setSeries(self, times: List[float], values: List[float], title: str) -> None:
-        self._times, self._values, self._title = times, values, title
+        self.setLines([(times, values, theme.ACCENT, "")], title)
+
+    def setLines(self, lines, title: str) -> None:
+        """Několik průběhů najednou – u vícekanálového měření jeden na kanál.
+
+        `lines` je seznam (časy, hodnoty, barva, popisek)."""
+        self._lines = [l for l in lines if len(l[1]) >= 1]
+        self._title = title
+        self._times = self._lines[0][0] if self._lines else []
+        self._values = [v for line in self._lines for v in line[1]]
         self.update()
 
     # ------------------------------------------------------------ kreslení --
@@ -55,7 +65,7 @@ class TrendChart(QWidget):
         painter.setPen(QPen(QColor(theme.NEUTRAL_700), 1))
         painter.drawText(6, 14, self._title)
 
-        if len(self._values) < 2:
+        if len(self._values) < 2 or not self._lines:
             painter.setPen(QColor(theme.NEUTRAL_500))
             painter.drawText(self.rect(), Qt.AlignCenter,
                              "Zatím není co vykreslit")
@@ -64,7 +74,8 @@ class TrendChart(QWidget):
         lo, hi = min(self._values), max(self._values)
         if hi - lo < 1e-9:
             hi, lo = hi + 1.0, lo - 1.0
-        t0, t1 = self._times[0], self._times[-1]
+        all_times = [t for line in self._lines for t in line[0]] or [0.0]
+        t0, t1 = min(all_times), max(all_times)
         span = max(t1 - t0, 1e-9)
 
         # osy a vodicí čáry
@@ -84,16 +95,29 @@ class TrendChart(QWidget):
         painter.drawText(pad_l, self.height() - 6, f"{t0:.0f} s")
         painter.drawText(pad_l + w - 46, self.height() - 6, f"{t1:.0f} s")
 
-        points = QPolygonF()
-        for t, value in zip(self._times, self._values):
-            x = pad_l + w * (t - t0) / span
-            y = pad_t + h * (1.0 - (value - lo) / (hi - lo))
-            points.append(QPointF(x, y))
         painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setPen(QPen(QColor(theme.ACCENT), 2))
-        painter.drawPolyline(points)
-        painter.setBrush(QColor(theme.ACCENT))
-        painter.drawEllipse(points[-1], 3, 3)
+        legend_x = pad_l + 6
+        if len(self._lines) > 1:
+            names = [l[3] for l in self._lines if l[3]]
+            width = sum(painter.fontMetrics().width(n) + 12 for n in names)
+            legend_x = max(pad_l + 6, self.width() - pad_r - width)
+        for times, values, color, name in self._lines:
+            points = QPolygonF()
+            for t, value in zip(times, values):
+                x = pad_l + w * (t - t0) / span
+                y = pad_t + h * (1.0 - (value - lo) / (hi - lo))
+                points.append(QPointF(x, y))
+            if not points:
+                continue
+            painter.setPen(QPen(QColor(color), 2))
+            if len(points) > 1:
+                painter.drawPolyline(points)
+            painter.setBrush(QColor(color))
+            painter.drawEllipse(points[-1], 3, 3)
+            if name:
+                # Legenda patří nahoru k názvu – dole se tluče s popisky osy.
+                painter.drawText(legend_x, 14, name)
+                legend_x += painter.fontMetrics().width(name) + 12
 
 
 class DarkFieldWindow(QDialog):
@@ -162,10 +186,20 @@ class DarkFieldWindow(QDialog):
             self.table.scrollToBottom()
         self.lbl_summary.setText(self.panel.summaryText())
 
+    def _chartLines(self, series, key):
+        """Jedna čára u jednokanálového měření, tři u vícekanálového."""
+        channels = series.channels()
+        if channels in ([], [""]):
+            return [(series.values("time_s"), series.values(key),
+                     theme.ACCENT, "")]
+        return [(series.values("time_s", c), series.values(key, c),
+                 "#{:02x}{:02x}{:02x}".format(*df.CHANNEL_COLORS.get(c, (0, 0, 0))),
+                 df.CHANNEL_TITLES.get(c, c)) for c in channels]
+
     def refresh(self) -> None:
         series = self.panel.series
         key, title = PLOTTABLE[max(0, self.cmb_metric.currentIndex())]
-        self.chart.setSeries(series.values("time_s"), series.values(key), title)
+        self.chart.setLines(self._chartLines(series, key), title)
         self.table.setRowCount(len(series.samples))
         for r, sample in enumerate(series.samples):
             self._fillRow(r, sample)
@@ -182,7 +216,7 @@ class DarkFieldWindow(QDialog):
             self.refresh()
             return
         key, title = PLOTTABLE[max(0, self.cmb_metric.currentIndex())]
-        self.chart.setSeries(series.values("time_s"), series.values(key), title)
+        self.chart.setLines(self._chartLines(series, key), title)
         row_index = self.table.rowCount()
         if row_index != len(series.samples) - 1:
             self.refresh()                 # tabulka se rozešla s daty
@@ -206,7 +240,7 @@ class DarkFieldPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.bias: Optional[df.Bias] = None
+        self.bias = df.BiasSet()
         self.series = df.Series()
         self.window_: Optional[DarkFieldWindow] = None
         self._save_dir = os.path.expanduser("~")
@@ -272,6 +306,62 @@ class DarkFieldPanel(QWidget):
             "to šum jednotlivých pixelů.")
         card.add(row(label("Min. částice", "meta"), None, self.spin_minarea,
                      label("px", "meta")))
+
+        self.chk_multi = QCheckBox("Postupně po kanálech (R → G → B)")
+        self.chk_multi.setToolTip(
+            "Každé měření pořídí tři snímky – pod červeným, zeleným a modrým\n"
+            "světlem. Kamera je černobílá, takže jde o měření ve třech úzkých\n"
+            "pásmech. Reference se snímá stejným způsobem.")
+        self.chk_multi.toggled.connect(self._onMultiToggled)
+        card.add(self.chk_multi)
+
+        head_exp = label("expozice", "meta")
+        head_exp.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        head_exp.setFixedWidth(72)
+        head_focus = label("ostření", "meta")
+        head_focus.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        head_focus.setFixedWidth(64)
+        card.add(row(None, head_exp, head_focus))
+
+        self.channel_rows = {}
+        for key in df.CHANNEL_ORDER:
+            scale = QDoubleSpinBox()
+            scale.setRange(0.05, 20.0)
+            scale.setDecimals(2)
+            scale.setSingleStep(0.1)
+            scale.setValue(1.0)
+            scale.setSuffix("×")
+            scale.setFixedWidth(72)
+            scale.setToolTip(
+                "Násobek expozičního času pro tento kanál. Senzor bývá "
+                "na modrou méně citlivý než na zelenou, takže se hodí "
+                "delší expozice.")
+            focus = QSpinBox()
+            focus.setRange(-400, 400)
+            focus.setValue(0)
+            focus.setFixedWidth(64)
+            focus.setToolTip(
+                "Posun zaostření pro tento kanál v krocích ostřicího motorku.\n"
+                "Barvy se lámou různě, takže ostří každá jinde. 0 = neměnit.")
+            swatch = label("■", "meta")
+            swatch.setStyleSheet("color: rgb({},{},{}); font-size: 15px;"
+                                 .format(*df.CHANNEL_COLORS[key]))
+            card.add(row(swatch, label(f"{df.CHANNEL_NM[key]} nm", "meta"),
+                         None, scale, focus))
+            self.channel_rows[key] = (scale, focus)
+
+        self.spin_settle = QDoubleSpinBox()
+        self.spin_settle.setRange(0.05, 10.0)
+        self.spin_settle.setDecimals(2)
+        self.spin_settle.setSingleStep(0.05)
+        self.spin_settle.setValue(0.40)
+        self.spin_settle.setSuffix(" s")
+        self.spin_settle.setFixedWidth(84)
+        self.spin_settle.setToolTip(
+            "Prodleva po přepnutí barvy a expozice, než se snímek pořídí.\n"
+            "Krátká prodleva změří ještě starý obraz – při pochybnostech "
+            "prodlužte.")
+        card.add(row(label("Ustálení", "meta"), None, self.spin_settle))
 
         self.chk_roi = QCheckBox("Měřit jen ve vybraném výřezu")
         self.chk_roi.setToolTip(
@@ -344,7 +434,7 @@ class DarkFieldPanel(QWidget):
         self.spin_abs.setEnabled(index == 1)
 
     def _onMeasureToggled(self, on: bool) -> None:
-        if on and self.bias is None:
+        if on and not self.bias:
             answer = QMessageBox.question(
                 self, "Dark Field",
                 "Není pořízený referenční snímek čistého sklíčka.\n\n"
@@ -388,7 +478,21 @@ class DarkFieldPanel(QWidget):
             bias_frames=self.spin_bias_frames.value(),
             um_per_px=getattr(self, "_um_per_px", 0.0),
             store_frames=self.chk_store.isChecked(),
+            multichannel=self.chk_multi.isChecked(),
+            settle_ms=int(self.spin_settle.value() * 1000),
+            exposure_scale={k: w[0].value() for k, w in self.channel_rows.items()},
+            focus_offset={k: w[1].value() for k, w in self.channel_rows.items()},
             roi=roi if self.chk_roi.isChecked() else None)
+
+    def isMultichannel(self) -> bool:
+        return self.chk_multi.isChecked()
+
+    def _onMultiToggled(self, on: bool) -> None:
+        for scale, focus in self.channel_rows.values():
+            scale.setEnabled(on)
+            focus.setEnabled(on)
+        self.spin_settle.setEnabled(on)
+        self._updateState()
 
     def wantsStoredFrames(self) -> bool:
         return self.chk_store.isChecked()
@@ -429,11 +533,41 @@ class DarkFieldPanel(QWidget):
             self.chk_store.setChecked(bool(data["store_frames"]))
         if "roi" in data:
             self.chk_roi.setChecked(data["roi"] is not None)
+        if "multichannel" in data:
+            self.chk_multi.setChecked(bool(data["multichannel"]))
+        if "settle_ms" in data:
+            try:
+                self.spin_settle.setValue(float(data["settle_ms"]) / 1000.0)
+            except (TypeError, ValueError):
+                pass
+        for name, position in (("exposure_scale", 0), ("focus_offset", 1)):
+            values = data.get(name)
+            if not isinstance(values, dict):
+                continue
+            for key, widget in self.channel_rows.items():
+                if key in values:
+                    try:
+                        widget[position].setValue(
+                            type(widget[position].value())(values[key]))
+                    except (TypeError, ValueError):
+                        pass
 
     # ----------------------------------------------------------- reference --
-    def setBias(self, bias: Optional[df.Bias]) -> None:
-        self.bias = bias
+    def setBias(self, bias, channel: str = "") -> None:
+        """Uloží referenci; u vícekanálového měření pod klíč kanálu."""
+        if isinstance(bias, df.BiasSet):
+            self.bias = bias
+        elif bias is None:
+            self.bias = df.BiasSet()
+        else:
+            self.bias.put(channel, bias)
         self._updateState()
+
+    def missingBias(self):
+        """Kanály, ke kterým ještě není reference."""
+        if not self.isMultichannel():
+            return [] if self.bias.get("") else [""]
+        return self.bias.missing(df.CHANNEL_ORDER)
 
     def setBiasProgress(self, taken: int, total: int) -> None:
         self.lbl_bias.setText(f"Snímám referenci… {taken}/{total}")
@@ -445,13 +579,13 @@ class DarkFieldPanel(QWidget):
         if not path:
             return
         try:
-            self.setBias(df.Bias.load(path))
+            self.setBias(df.BiasSet.load(path))
         except Exception as exc:                       # noqa: BLE001
             QMessageBox.warning(self, "Dark Field",
                                 f"Referenci se nepodařilo načíst:\n{exc}")
 
     def saveBias(self) -> None:
-        if self.bias is None:
+        if not self.bias:
             return
         default = os.path.join(self._save_dir, "reference.npz")
         path, _ = QFileDialog.getSaveFileName(
@@ -517,6 +651,18 @@ class DarkFieldPanel(QWidget):
     def summaryText(self) -> str:
         if not len(self.series):
             return "Zatím nic naměřeno."
+        channels = self.series.channels()
+        if channels not in ([], [""]):
+            lines = [f"{len(self.series)} měření ve {len(channels)} kanálech"]
+            for channel in channels:
+                rows = self.series.rows(channel)
+                if not rows:
+                    continue
+                lines.append("{}: pokrytí {:.4f} % · trend {:+.4f} %/min"
+                             .format(df.CHANNEL_TITLES.get(channel, channel),
+                                     rows[-1].coverage_pct,
+                                     self.series.rate_per_minute(channel=channel)))
+            return "\n".join(lines)
         last = self.series.samples[-1]
         rate = self.series.rate_per_minute()
         parts = [f"{len(self.series)} měření",
@@ -529,9 +675,13 @@ class DarkFieldPanel(QWidget):
         return " · ".join(parts)
 
     def _updateState(self) -> None:
-        self.lbl_bias.setText(self.bias.describe() if self.bias
-                              else "Není pořízen – změřte čisté sklíčko.")
-        self.btn_bias_save.setEnabled(self.bias is not None)
+        text = (self.bias.describe() if self.bias
+                else "Není pořízen – změřte čisté sklíčko.")
+        missing = self.missingBias()
+        if self.bias and missing and missing != [""]:
+            text += " · chybí: " + ", ".join(df.CHANNEL_TITLES[c] for c in missing)
+        self.lbl_bias.setText(text)
+        self.btn_bias_save.setEnabled(bool(self.bias))
         self.lbl_values.setText(self.summaryText())
         self.btn_table.setText("Tabulka a graf…" if not len(self.series)
                                else f"Tabulka a graf… ({len(self.series)})")

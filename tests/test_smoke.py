@@ -934,7 +934,10 @@ def test_darkfield_series_and_csv():
         data = [r for r in rows if r and not r[0].startswith("# ")]
         assert any("sigma" in r[0] for r in notes)        # nastavení je v hlavičce
         assert len(data) == 6                             # záhlaví + 5 řádků
-        assert data[0][0] == "#" and "Pokrytí" in data[0][3]
+        assert data[0][0] == "#"
+        # sloupce se hledají podle názvu, ne podle pořadí – to se mění
+        assert any("Pokrytí" in cell for cell in data[0])
+        assert any("Kanál" in cell for cell in data[0])
         assert data[-1][1] == "240.00"
     finally:
         os.unlink(path)
@@ -978,7 +981,7 @@ def test_darkfield_panel_flow():
     app = _app()
     panel = DarkFieldPanel()
     try:
-        assert panel.bias is None
+        assert not panel.bias                    # prázdná sada referencí
         assert "Není pořízen" in panel.lbl_bias.text()
 
         rng = np.random.default_rng(11)
@@ -1003,7 +1006,9 @@ def test_darkfield_panel_flow():
 
         panel.showTable()
         assert panel.window_.table.rowCount() == 3
-        assert panel.window_.table.item(2, 3).text() == "1.0000"
+        # sloupec se najde podle klíče – pořadí se časem mění
+        coverage = [k for k, _, _ in df.COLUMNS].index("coverage_pct")
+        assert panel.window_.table.item(2, coverage).text() == "1.0000"
 
         panel.clearSeries()
         assert len(panel.series) == 0
@@ -1038,8 +1043,8 @@ def test_main_window_darkfield_measures_from_camera():
             return check()
 
         win.startBiasCapture(3)
-        assert wait_for(lambda: win.df_panel.bias is not None), "reference nepřišla"
-        assert win.df_panel.bias.frames == 3
+        assert wait_for(lambda: bool(win.df_panel.bias)), "reference nepřišla"
+        assert win.df_panel.bias.get().frames == 3
 
         win._requestSample()
         assert wait_for(lambda: len(win.df_panel.series) == 1), "měření nepřišlo"
@@ -1350,6 +1355,163 @@ def test_exposure_check_runs_against_demo_camera():
     finally:
         QMessageBox.exec_ = shown
         win.close()
+
+
+def test_darkfield_multichannel_cycle():
+    """Cyklus R → G → B: barva, expozice, tři řádky a návrat do původního stavu."""
+    import time as _time
+
+    from bmscam import darkfield as df
+    from bmscam.ui.main_window import MainWindow
+
+    app = _app()
+    win = MainWindow(prefer_demo=True)
+    try:
+        win.connectCamera()
+
+        def pump(check, limit=15.0):
+            deadline = _time.time() + limit
+            while _time.time() < deadline and not check():
+                app.processEvents()
+                _time.sleep(0.01)
+            return check()
+
+        assert pump(lambda: win.view.hasImage()), "demo kamera nedodala obraz"
+
+        # osvětlení "připojíme" jen naoko – zajímá nás, co se pošle
+        sent = []
+        win.led_panel.link.is_open = lambda: True
+        win.led_panel._send = sent.append
+
+        panel = win.df_panel
+        panel.chk_multi.setChecked(True)
+        panel.spin_settle.setValue(0.05)
+        panel.channel_rows["red"][0].setValue(1.0)
+        panel.channel_rows["green"][0].setValue(2.0)
+        panel.channel_rows["blue"][0].setValue(3.0)
+
+        # Režim vyžaduje ruční expozici – s automatikou by se čas měnil sám.
+        win.camera.set("aexpo", 0)
+        base_expo = win.camera.get("expotime")
+        base_focus = win.camera.get("afposition")
+
+        # --- reference se snímá po kanálech
+        win.startBiasCapture(2)
+        assert pump(lambda: not win._mc_mode and len(panel.bias) == 3), \
+            f"reference nedokončena: {len(panel.bias)} kanálů"
+        assert panel.bias.missing(df.CHANNEL_ORDER) == []
+        for key in df.CHANNEL_ORDER:
+            assert panel.bias.get(key).frames == 2
+
+        # --- jedno měření = tři řádky, po jednom na kanál
+        expo_seen = {}
+        original_apply = win._applyChannel
+
+        def spy(channel, settings):
+            original_apply(channel, settings)
+            expo_seen[channel] = win.camera.get("expotime")
+
+        win._applyChannel = spy
+        panel.clearSeries()
+        win._requestSample()
+        assert pump(lambda: not win._mc_mode and len(panel.series) == 3), \
+            f"cyklus nedoběhl: {len(panel.series)} řádků"
+
+        assert [s.channel for s in panel.series.samples] == list(df.CHANNEL_ORDER)
+        assert panel.series.channels() == list(df.CHANNEL_ORDER)
+
+        # násobek expozice se opravdu propsal do kamery
+        assert expo_seen["green"] > expo_seen["red"], expo_seen
+        assert expo_seen["blue"] > expo_seen["green"], expo_seen
+
+        # každý kanál dostal svou barvu
+        for key in df.CHANNEL_ORDER:
+            want = LedProtocolAllColor(df.CHANNEL_COLORS[key])
+            assert want in sent, (key, sent)
+
+        # po cyklu je expozice, ostření i barva zpátky
+        assert win.camera.get("expotime") == base_expo
+        assert win.camera.get("afposition") == base_focus
+        assert win._mc_channel == ""
+    finally:
+        win.close()
+
+
+def LedProtocolAllColor(rgb):
+    from bmscam.leds import LedProtocol
+    return LedProtocol.all_color(rgb)
+
+
+def test_darkfield_multichannel_needs_the_board():
+    """Bez připojeného Arduina se režim nespustí a řekne proč."""
+    from bmscam.ui.main_window import MainWindow
+    from PyQt5.QtWidgets import QMessageBox
+
+    _app()
+    win = MainWindow(prefer_demo=True)
+    shown = []
+    original = QMessageBox.information
+    QMessageBox.information = lambda parent, title, text, *a, **k: shown.append(text)
+    try:
+        win.connectCamera()
+        win.camera.set("aexpo", 0)
+        win.df_panel.chk_multi.setChecked(True)
+        assert win._startChannelCycle("measure") is False
+        assert shown and "Arduino" in shown[0], shown
+        assert win._mc_mode == ""
+    finally:
+        QMessageBox.information = original
+        win.close()
+
+
+def test_darkfield_multichannel_reanalysis_keeps_channels():
+    """Zpětný rozbor si vezme ke každému snímku referenci jeho kanálu."""
+    import shutil
+    import tempfile
+
+    import numpy as np
+
+    from bmscam import darkfield as df
+
+    folder = tempfile.mkdtemp()
+    try:
+        biases = df.BiasSet()
+        store = df.FrameStore(folder)
+        for index, channel in enumerate(df.CHANNEL_ORDER):
+            level = 10.0 + 20 * index          # každý kanál svítí jinak
+            biases.put(channel, df.Bias(np.full((60, 80), level, np.float32), 4))
+            frame = np.full((60, 80), int(level), np.uint8)
+            frame[20:26, 30:36] = 200          # stejná částice ve všech
+            store.save(frame, channel=channel)
+
+        paths = df.FrameStore.list_frames(folder)
+        assert [df.FrameStore.frame_channel(p) for p in paths] == \
+            list(df.CHANNEL_ORDER)
+
+        series = df.reanalyze(paths, biases, df.Settings(sigma=4.0, min_area_px=2))
+        assert [s.channel for s in series.samples] == list(df.CHANNEL_ORDER)
+        # správná reference = ve všech kanálech se najde táž jedna částice
+        assert [int(s.particles) for s in series.samples] == [1, 1, 1]
+
+        # Se špatnou referencí (jednou pro všechny) se rozbití pozná až
+        # u pevného prahu – práh podle sigma je vůči posunu pozadí odolný,
+        # protože si úroveň pozadí dopočítá z mediánu snímku.
+        wrong = df.BiasSet({"": biases.get("red")})
+        absolute = df.Settings(threshold_mode=df.THRESHOLD_ABSOLUTE,
+                               absolute=15.0, min_area_px=2)
+        good = df.reanalyze(paths, biases, absolute)
+        bad = df.reanalyze(paths, wrong, absolute)
+        assert [int(s.particles) for s in good.samples] == [1, 1, 1]
+        assert all(s.coverage_pct < 1.0 for s in good.samples), \
+            [s.coverage_pct for s in good.samples]
+        # zelený a modrý snímek jsou proti červené referenci celé "nad prahem",
+        # takže pokrytí vyskočí na sto procent – přesně to, čemu se má
+        # vlastní referencí pro každý kanál předejít
+        assert bad.samples[0].coverage_pct < 1.0
+        assert bad.samples[1].coverage_pct > 99.0, bad.samples[1].coverage_pct
+        assert bad.samples[2].coverage_pct > 99.0, bad.samples[2].coverage_pct
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 if __name__ == "__main__":

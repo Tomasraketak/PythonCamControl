@@ -39,7 +39,11 @@ Zdrojový návrh je v [docs/design](docs/design/).
   v temném poli: referenční snímek čistého sklíčka (průměr z N snímků,
   uložitelný do souboru), pravidelné měření v nastavitelném intervalu,
   práh podle šumu (σ) nebo pevný, filtr nejmenší částice, volitelně jen
-  ve vybraném výřezu. Výsledky se zapisují do tabulky s grafem průběhu
+  ve vybraném výřezu. Volitelně **měří postupně pod červeným, zeleným
+  a modrým světlem** (625 / 520 / 470 nm) – u každého kanálu se dá zadat
+  vlastní násobek expozice a posun ostření, protože každá barva ostří
+  jinde a senzor na ni má jinou citlivost. Reference se snímá stejně,
+  jedna pro každý kanál. Výsledky se zapisují do tabulky s grafem průběhu
   a dají se uložit do CSV. Rozbor běží ve vlastním vlákně, takže okno
   zůstane ovladatelné, a s každým měřením se ukládá i snímek – celou řadu
   jde kdykoli **spočítat znovu** s jiným prahem (*Zpětný rozbor…*), aniž by

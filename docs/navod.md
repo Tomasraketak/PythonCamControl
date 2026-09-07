@@ -184,6 +184,18 @@ je jen shrnutí kroků:
 4. Průběh sledujte v **Tabulka a graf…**, výsledky uložte tlačítkem **CSV…**
    (středníky a BOM, takže to český Excel otevře rovnou).
 
+### Měření po kanálech
+
+Zaškrtávátko **Postupně po kanálech (R → G → B)** přepne měření na tři
+vlnové délky: každý cyklus pořídí snímek pod červeným, zeleným a modrým
+světlem. U každého kanálu se zadá násobek expozice a posun ostření, protože
+každá barva ostří jinde a senzor na ni má jinou citlivost. Reference se
+snímá stejným způsobem, jedna pro každý kanál.
+
+Režim potřebuje **připojené Arduino** (barvy rozsvěcí ono) a **ruční
+expozici** – se zapnutou automatikou by násobky neplatily a aplikace to
+odmítne spustit. Podrobněji v [darkfield.md](darkfield.md).
+
 ### Zpětný rozbor
 
 Pokud necháte zapnuté **Ukládat snímky pro zpětný rozbor** (výchozí stav),

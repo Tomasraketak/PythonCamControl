@@ -22,6 +22,51 @@ tmavé a všechno, co na něm ulpí, rozptyluje světlo a svítí.
    snímek a přibude řádek do tabulky. **Tabulka a graf…** otevře okno
    s průběhem, **CSV…** ho uloží.
 
+## Měření po kanálech (R → G → B)
+
+Kamera je černobílá, ale osvětlení umí svítit jen jednou složkou RGB.
+Snímek pořízený pod jednou barvou je tedy měření v úzkém pásmu, a tři
+snímky za sebou dají tři vlnové délky: 625, 520 a 470 nm.
+
+Zaškrtnutí **Postupně po kanálech** to zapne. Každé měření pak proběhne
+takto:
+
+1. osvětlení se přepne na červenou, nastaví se expozice a ostření kanálu,
+2. počká se dobu **Ustálení**, než se to projeví v obrazu,
+3. pořídí se a vyhodnotí snímek,
+4. totéž pro zelenou a modrou,
+5. expozice, ostření i barva osvětlení se vrátí do původního stavu.
+
+Reference se snímá stejným způsobem – vznikne jedna pro každý kanál a
+uloží se všechny do jednoho `.npz`. Bez toho by měření nedávalo smysl:
+sklíčko má pod každou barvou jiný jas.
+
+### Expozice a ostření po kanálech
+
+Každá barva se láme jinak, takže ostří jinde, a senzor na ni má jinou
+citlivost. Proto má každý kanál dvě vlastní čísla:
+
+* **expozice** – násobek expozičního času nastaveného v záložce
+  *Expozice*. Modrá typicky potřebuje delší čas než zelená.
+* **ostření** – posun polohy ostřicího motorku v jeho krocích. 0 znamená
+  neměnit.
+
+Obojí se hledá pokusem: zapněte kanál tlačítkem *Jediný kanál* v panelu
+osvětlení, dolaďte obraz ručně a rozdíl proti základnímu nastavení zadejte
+sem.
+
+### Na co si dát pozor
+
+* **Režim vyžaduje ruční expozici.** Se zapnutou automatikou by se čas
+  měnil sám a násobky by neznamenaly nic; aplikace to odmítne spustit.
+* **Potřebuje připojené Arduino** – barvy rozsvěcí ono.
+* Jeden cyklus trvá zhruba `3 × (ustálení + doba rozboru)`. Při ustálení
+  0,4 s a 4K snímcích počítejte s dvěma až třemi sekundami, takže interval
+  pod pět sekund nemá smysl.
+* Tabulka i graf pak vedou tři řady zvlášť; ve sloupci **Kanál** je vidět,
+  ke které barvě řádek patří. Uložené snímky mají barvu v názvu, takže
+  zpětný rozbor si na každý vezme referenci jeho kanálu.
+
 ## Zpětný rozbor
 
 Práh se dobře nastavuje až tehdy, když víte, jak data vypadají – jenže to

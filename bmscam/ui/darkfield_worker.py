@@ -41,8 +41,8 @@ class _Worker(QObject):
     def cancelBias(self) -> None:
         self._collector = None
 
-    @pyqtSlot(object, object, object, object, object)
-    def process(self, gray, bias, settings, when, store) -> None:
+    @pyqtSlot(object, object, object, object, object, object)
+    def process(self, gray, bias, settings, when, store, channel) -> None:
         try:
             collector = self._collector
             if collector is not None:
@@ -54,9 +54,10 @@ class _Worker(QObject):
                     self.biasProgress.emit(collector.taken, collector.count)
                 return
             if store is not None:
-                store.save(gray, when)
-            self.sampleReady.emit(
-                df.analyze(df.crop(gray, settings.roi), bias, settings), when)
+                store.save(gray, when, channel or "")
+            metrics = df.analyze(df.crop(gray, settings.roi), bias, settings)
+            metrics["channel"] = channel or ""
+            self.sampleReady.emit(metrics, when)
         except Exception as exc:                          # noqa: BLE001
             self._collector = None
             self.failed.emit(str(exc))
@@ -72,7 +73,7 @@ class DarkFieldRunner(QObject):
     biasReady = pyqtSignal(object)
     failed = pyqtSignal(str)
 
-    _submit = pyqtSignal(object, object, object, object, object)
+    _submit = pyqtSignal(object, object, object, object, object, object)
     _startBias = pyqtSignal(int)
     _cancelBias = pyqtSignal()
 
@@ -98,13 +99,13 @@ class DarkFieldRunner(QObject):
         self._thread.start()
 
     # ------------------------------------------------------------ zadání ---
-    def submit(self, gray, bias, settings, when, store=None) -> bool:
+    def submit(self, gray, bias, settings, when, store=None, channel="") -> bool:
         """Pošle snímek k rozboru. False = vlákno nestíhá, snímek se zahodil."""
         if self.busy:
             self.dropped += 1
             return False
         self.busy = True
-        self._submit.emit(gray, bias, settings, when, store)
+        self._submit.emit(gray, bias, settings, when, store, channel)
         return True
 
     def startBias(self, count: int) -> None:

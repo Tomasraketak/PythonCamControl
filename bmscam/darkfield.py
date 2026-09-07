@@ -30,12 +30,30 @@ import numpy as np
 THRESHOLD_SIGMA = "sigma"
 THRESHOLD_ABSOLUTE = "absolute"
 
+#: Kanály vícekanálového měření. Kamera je černobílá, ale osvětlení umí
+#: svítit jen jednou složkou – snímek pořízený pod jednou vlnovou délkou
+#: je tedy měření v úzkém pásmu. Každá barva se láme jinak, takže má
+#: vlastní zaostření i expozici; proto se u každé dá zadat násobek
+#: expozičního času a posun ostření.
+CHANNEL_ORDER = ("red", "green", "blue")
+CHANNEL_TITLES = {"red": "Červená", "green": "Zelená", "blue": "Modrá"}
+CHANNEL_COLORS = {"red": (255, 0, 0), "green": (0, 255, 0), "blue": (0, 0, 255)}
+CHANNEL_NM = {"red": 625, "green": 520, "blue": 470}
+
+
+def channel_title(key: str) -> str:
+    """Popisek kanálu i s vlnovou délkou."""
+    if key not in CHANNEL_TITLES:
+        return str(key)
+    return "{} {} nm".format(CHANNEL_TITLES[key], CHANNEL_NM[key])
+
 #: popisky sloupců tabulky (pořadí = pořadí ve výstupu i v CSV)
 COLUMNS: Sequence[Tuple[str, str, str]] = (
     # klíč,            záhlaví,              jednotka
     ("index",          "#",                  ""),
     ("time_s",         "Čas",                "s"),
     ("clock",          "Hodiny",             ""),
+    ("channel",        "Kanál",              ""),
     ("coverage_pct",   "Pokrytí",            "%"),
     ("particles",      "Částic",             ""),
     ("particle_area_px", "Plocha částic",    "px"),
@@ -60,6 +78,11 @@ class Settings:
         self.um_per_px: float = 0.0         # 0 = nekalibrováno
         self.roi: Optional[Tuple[int, int, int, int]] = None   # x, y, w, h
         self.store_frames: bool = True      # ukládat snímky pro zpětný rozbor
+        self.multichannel: bool = False     # měřit postupně pod R, G a B
+        self.settle_ms: int = 400           # co počkat po přepnutí barvy
+        # násobek expozičního času a posun ostření pro každý kanál
+        self.exposure_scale: Dict[str, float] = {k: 1.0 for k in CHANNEL_ORDER}
+        self.focus_offset: Dict[str, int] = {k: 0 for k in CHANNEL_ORDER}
         for key, value in kwargs.items():
             if not hasattr(self, key):
                 raise KeyError(key)
@@ -110,6 +133,92 @@ class Bias:
         return cls(data["mean"], int(data["frames"]), created, note)
 
 
+class BiasSet:
+    """Reference k měření – buď jedna, nebo jedna pro každý kanál.
+
+    Jednokanálové měření používá klíč "" (prázdný řetězec), vícekanálové
+    klíče „red“, „green“ a „blue“. Držet obojí v jednom objektu je
+    jednodušší než dvě větve všude, kde se s referencí pracuje.
+    """
+
+    def __init__(self, items: Optional[Dict[str, Bias]] = None):
+        self.items: Dict[str, Bias] = dict(items or {})
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+    def __bool__(self) -> bool:
+        return bool(self.items)
+
+    def get(self, channel: str = "") -> Optional[Bias]:
+        """Reference pro kanál; když pro něj není, zkusí se jednokanálová."""
+        return self.items.get(channel) or self.items.get("")
+
+    def put(self, channel: str, bias: Bias) -> None:
+        self.items[channel] = bias
+
+    def missing(self, channels: Sequence[str]) -> List[str]:
+        """Kanály, pro které reference chybí."""
+        return [c for c in channels if c not in self.items]
+
+    def describe(self) -> str:
+        if not self.items:
+            return "Není pořízena."
+        if set(self.items) == {""}:
+            return self.items[""].describe()
+        parts = []
+        for key in CHANNEL_ORDER:
+            if key in self.items:
+                parts.append("{}: {:.1f} ADU / {} sn."
+                             .format(CHANNEL_TITLES[key],
+                                     self.items[key].level,
+                                     self.items[key].frames))
+        first = next(iter(self.items.values()))
+        return "{}×{} px · {}".format(first.shape[1], first.shape[0],
+                                      " · ".join(parts))
+
+    # ------------------------------------------------------------ soubor ---
+    def save(self, path: str) -> None:
+        data = {}
+        for channel, bias in self.items.items():
+            tag = channel or "mono"
+            data[f"mean_{tag}"] = bias.mean
+            data[f"frames_{tag}"] = bias.frames
+            data[f"created_{tag}"] = bias.created.isoformat()
+        if not data:
+            raise ValueError("Není co uložit – reference není pořízená.")
+        np.savez_compressed(path, **data)
+
+    @classmethod
+    def load(cls, path: str) -> "BiasSet":
+        """Načte sadu; přečte i starší soubor s jedinou referencí."""
+        data = np.load(path, allow_pickle=False)
+        items: Dict[str, Bias] = {}
+        if "mean" in data:                      # starší formát jedné reference
+            created = datetime.now()
+            try:
+                created = datetime.fromisoformat(str(data["created"]))
+            except (KeyError, ValueError):
+                pass
+            items[""] = Bias(data["mean"], int(data["frames"]), created)
+            return cls(items)
+        for key in data.files:
+            if not key.startswith("mean_"):
+                continue
+            tag = key[len("mean_"):]
+            channel = "" if tag == "mono" else tag
+            created = datetime.now()
+            try:
+                created = datetime.fromisoformat(str(data[f"created_{tag}"]))
+            except (KeyError, ValueError):
+                pass
+            frames = int(data[f"frames_{tag}"]) if f"frames_{tag}" in data else 1
+            items[channel] = Bias(data[key], frames, created)
+        if not items:
+            raise ValueError("Soubor neobsahuje žádnou referenci.")
+        return cls(items)
+
+
 class BiasCollector:
     """Sbírá snímky a průměruje je do referenčního snímku."""
 
@@ -156,7 +265,9 @@ class Sample:
         out = []
         for key, _, _ in COLUMNS:
             value = getattr(self, key)
-            if key == "particles":
+            if key == "channel":
+                out.append(channel_title(value) if value else "–")
+            elif key == "particles":
                 # -1 = bez OpenCV se částice nepočítají
                 out.append("–" if int(value) < 0 else f"{int(value)}")
             elif key in ("index", "particle_area_px"):
@@ -315,14 +426,28 @@ class Series:
         self.samples.append(sample)
         return sample
 
-    def values(self, key: str) -> List[float]:
-        return [float(getattr(s, key)) for s in self.samples]
+    def rows(self, channel: Optional[str] = None) -> List["Sample"]:
+        """Měření, volitelně jen pro jeden kanál."""
+        if channel is None:
+            return list(self.samples)
+        return [s for s in self.samples if s.channel == channel]
 
-    def rate_per_minute(self, key: str = "coverage_pct", window: int = 10) -> float:
+    def channels(self) -> List[str]:
+        """Kanály, které se v řadě vyskytly, v ustáleném pořadí."""
+        seen = {s.channel for s in self.samples}
+        ordered = [c for c in CHANNEL_ORDER if c in seen]
+        return ordered + sorted(seen - set(ordered))
+
+    def values(self, key: str, channel: Optional[str] = None) -> List[float]:
+        return [float(getattr(s, key)) for s in self.rows(channel)]
+
+    def rate_per_minute(self, key: str = "coverage_pct", window: int = 10,
+                        channel: Optional[str] = None) -> float:
         """Sklon posledních měření – jak rychle kontaminace přibývá."""
-        if len(self.samples) < 2:
+        samples = self.rows(channel)
+        if len(samples) < 2:
             return 0.0
-        recent = self.samples[-max(2, window):]
+        recent = samples[-max(2, window):]
         times = np.array([s.time_s for s in recent], dtype=float)
         values = np.array([float(getattr(s, key)) for s in recent], dtype=float)
         span = times[-1] - times[0]
@@ -383,16 +508,21 @@ class FrameStore:
             return None
         return cv2
 
-    def save(self, gray: np.ndarray, when: Optional[datetime] = None) -> str:
-        """Uloží snímek a vrátí cestu k němu."""
+    def save(self, gray: np.ndarray, when: Optional[datetime] = None,
+             channel: str = "") -> str:
+        """Uloží snímek a vrátí cestu k němu.
+
+        Kanál je součástí názvu, aby zpětný rozbor věděl, pod jakou barvou
+        snímek vznikl, a mohl na něj vzít správnou referenci."""
         when = when or datetime.now()
         os.makedirs(self.directory, exist_ok=True)
         data = np.asarray(gray)
         if data.dtype != np.uint8:
             data = np.clip(data, 0, 255).astype(np.uint8)
         stamp = when.strftime("%Y%m%d_%H%M%S_%f")[:-3]
+        tag = f"{channel}_" if channel in CHANNEL_TITLES else ""
         base = os.path.join(self.directory,
-                            f"{self.PREFIX}{self.count + 1:05d}_{stamp}")
+                            f"{self.PREFIX}{self.count + 1:05d}_{tag}{stamp}")
         cv2 = self._cv2()
         if cv2 is not None:
             path = base + ".png"
@@ -448,6 +578,15 @@ class FrameStore:
         return image
 
     @staticmethod
+    def frame_channel(path: str) -> str:
+        """Kanál z názvu souboru; prázdný řetězec u jednokanálového měření."""
+        stem = os.path.splitext(os.path.basename(path))[0]
+        for part in stem.split("_"):
+            if part in CHANNEL_TITLES:
+                return part
+        return ""
+
+    @staticmethod
     def frame_time(path: str) -> Optional[datetime]:
         """Čas z názvu souboru – df_00007_20260907_143012_250.png."""
         stem = os.path.splitext(os.path.basename(path))[0]
@@ -463,7 +602,14 @@ class FrameStore:
                 return None
 
 
-def reanalyze(paths: Sequence[str], bias: Optional[Bias], settings: Settings,
+def reference(bias, channel: str = "") -> Optional[Bias]:
+    """Referenci vytáhne z BiasSet, nebo propustí samotný Bias / None."""
+    if isinstance(bias, BiasSet):
+        return bias.get(channel)
+    return bias
+
+
+def reanalyze(paths: Sequence[str], bias, settings: Settings,
               progress=None) -> "Series":
     """Projde uložené snímky znovu a sestaví z nich novou řadu měření.
 
@@ -473,7 +619,10 @@ def reanalyze(paths: Sequence[str], bias: Optional[Bias], settings: Settings,
     total = len(paths)
     for done, path in enumerate(paths, 1):
         gray = FrameStore.load_frame(path)
-        metrics = analyze(crop(gray, settings.roi), bias, settings)
+        channel = FrameStore.frame_channel(path)
+        metrics = analyze(crop(gray, settings.roi), reference(bias, channel),
+                          settings)
+        metrics["channel"] = channel
         series.add(metrics, FrameStore.frame_time(path))
         if progress is not None and progress(done, total) is False:
             break
