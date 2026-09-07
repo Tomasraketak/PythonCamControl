@@ -690,6 +690,7 @@ class MainWindow(QMainWindow):
             self._nextChannel()
             return
         self.statusMessage("Reference pořízena", 4000)
+        self._autoSaveBias()
 
     def _onDarkFieldSample(self, metrics, when) -> None:
         self.df_panel.addSample(metrics, when)
@@ -800,6 +801,7 @@ class MainWindow(QMainWindow):
         self._loadValues()
         if mode == "bias":
             self.statusMessage("Reference pořízena pro všechny tři kanály", 5000)
+            self._autoSaveBias()
 
     def _onDarkFieldFailed(self, message: str) -> None:
         self._df_pending = False
@@ -823,6 +825,9 @@ class MainWindow(QMainWindow):
                     self.df_panel.stopMeasuring()
                     return
             self.df_panel.setStoreInfo(self._df_store)
+            # Každé spuštění začíná s čistou tabulkou i grafem – předchozí
+            # řada se uložila při zastavení, takže se nic neztratí.
+            self.df_panel.clearSeries()
             self.df_runner.dropped = 0
             self.df_timer.start(max(200, int(interval * 1000)))
             self._requestSample()          # první měření hned, ne až za interval
@@ -833,12 +838,78 @@ class MainWindow(QMainWindow):
             if self._mc_mode:
                 self._mc_queue = []
                 self._finishChannelCycle()
+            saved = self._autoSaveSeries()
+            if saved:
+                self.statusMessage("Měření uloženo: " + saved, 8000)
             if self.df_runner.dropped:
                 self.statusMessage(
                     "Měření zastaveno – {} snímků se nestihlo zpracovat, "
                     "zkuste delší interval".format(self.df_runner.dropped), 8000)
             else:
                 self.statusMessage("Měření kontaminace zastaveno", 3000)
+
+    def _autoSaveSeries(self) -> str:
+        """Uloží naměřenou řadu do CSV hned po zastavení měření.
+
+        Ukládá se ke snímkům toho běhu, když se archivovaly; jinak do
+        pracovní složky. Chyba zápisu měření nezastaví – jen se ohlásí."""
+        folder = (self._df_store.directory if self._df_store is not None
+                  else self.save_dir)
+        try:
+            return self.df_panel.autoSaveSeries(folder)
+        except OSError as exc:
+            self.statusMessage(f"Tabulku se nepodařilo uložit: {exc}", 8000)
+            return ""
+
+    def _biasNote(self) -> str:
+        """Jednořádkový popis podmínek, za kterých reference vznikla."""
+        parts = [datetime.now().strftime("%d.%m.%Y %H:%M:%S")]
+        if self.camera is not None:
+            for key, title in self.EXPO_WATCHED:
+                if key not in self.specs:
+                    continue
+                try:
+                    parts.append(f"{title} {self.camera.get(key)}")
+                except Exception:
+                    pass
+        leds = self.led_panel.workspaceSettings()
+        parts.append("osvětlení {} ({})".format(
+            leds.get("master_brightness"),
+            "zap" if leds.get("master_on") else "vyp"))
+        settings = self.df_panel.settings(self._darkFieldRoi())
+        parts.append("práh {} {:g}".format(
+            settings.threshold_mode,
+            settings.sigma if settings.threshold_mode == darkfield.THRESHOLD_SIGMA
+            else settings.absolute))
+        return " · ".join(str(p) for p in parts)
+
+    def _autoSaveBias(self) -> None:
+        """Uloží referenci hned po pořízení, i s popisem nastavení.
+
+        Reference bez záznamu expozice a osvětlení se za týden nedá
+        použít, proto se vedle .npz ukládá i celé nastavení v JSON."""
+        bias = self.df_panel.bias
+        if not bias:
+            return
+        folder = os.path.join(self._ensureDir(), "reference")
+        stamp = self._stamp()
+        note = self._biasNote()
+        try:
+            os.makedirs(folder, exist_ok=True)
+            path = os.path.join(folder, f"reference_{stamp}.npz")
+            bias.save(path, note)
+            data = workspace.new(
+                camera=self._cameraSettings(),
+                leds=self.led_panel.workspaceSettings(),
+                darkfield=self.df_panel.settings(self._darkFieldRoi()).to_dict(),
+                capture=self._captureSettings())
+            data["reference"] = {"file": os.path.basename(path), "note": note,
+                                 "describe": bias.describe()}
+            workspace.save(os.path.join(folder, f"reference_{stamp}.json"), data)
+        except (OSError, ValueError) as exc:
+            self.statusMessage(f"Referenci se nepodařilo uložit: {exc}", 8000)
+            return
+        self.statusMessage("Reference uložena: " + path, 8000)
 
     def _makeDarkFieldDir(self) -> str:
         """Každé měření dostane vlastní podsložku – stejně jako časosběr."""
@@ -1349,6 +1420,13 @@ class MainWindow(QMainWindow):
             self._updateDirLabel()
             self.refreshProfiles()
 
+    def _settingsDir(self) -> str:
+        """Podsložka „nastavení“ v pracovní složce; založí se, když chybí."""
+        try:
+            return workspace.settings_dir(self._ensureDir())
+        except OSError:
+            return self.save_dir
+
     def _updateDirLabel(self) -> None:
         text = f"Ukládat do: {self.save_dir}"
         self.lbl_dir.setText(text)
@@ -1361,7 +1439,10 @@ class MainWindow(QMainWindow):
         self.cmb_profile.blockSignals(True)
         self.cmb_profile.clear()
         self.cmb_profile.addItem("Výchozí", "")
-        for path in sorted(glob.glob(os.path.join(self.save_dir, "*.json"))):
+        found = sorted(glob.glob(os.path.join(self._settingsDir(), "*.json")))
+        # starší verze ukládaly nastavení přímo do pracovní složky
+        found += sorted(glob.glob(os.path.join(self.save_dir, "*.json")))
+        for path in found:
             self.cmb_profile.addItem(os.path.splitext(os.path.basename(path))[0], path)
         self.cmb_profile.blockSignals(False)
 
@@ -1407,7 +1488,7 @@ class MainWindow(QMainWindow):
         """Uloží celé nastavení – kameru, osvětlení, rozbor i snímání."""
         path, _ = QFileDialog.getSaveFileName(
             self, "Uložit kompletní nastavení",
-            workspace.default_name(self._ensureDir()), "JSON (*.json)")
+            workspace.default_name(self._settingsDir()), "JSON (*.json)")
         if not path:
             return
         if not path.lower().endswith(".json"):
@@ -1428,7 +1509,7 @@ class MainWindow(QMainWindow):
 
     def loadProfile(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Načíst kompletní nastavení",
-                                              self.save_dir, "JSON (*.json)")
+                                              self._settingsDir(), "JSON (*.json)")
         if path:
             self.applyProfile(path)
 

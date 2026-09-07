@@ -110,6 +110,19 @@ def describe(data: Dict[str, Any]) -> List[str]:
     return lines or ["Soubor neobsahuje žádné známé nastavení."]
 
 
+#: podsložka, do které se ukládají soubory s nastavením
+SETTINGS_FOLDER = "nastavení"
+
+
+def settings_dir(base: str) -> str:
+    """Složka „nastavení“ uvnitř pracovní složky; když není, založí se.
+
+    Nastavení tak leží pohromadě vedle fotek, ne rozházené mezi nimi."""
+    path = os.path.join(base, SETTINGS_FOLDER)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
 def default_name(folder: str) -> str:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return os.path.join(folder, f"nastaveni_{stamp}.json")

@@ -377,7 +377,7 @@ class DarkFieldPanel(QWidget):
         self.spin_interval = QDoubleSpinBox()
         self.spin_interval.setRange(0.2, 3600.0)
         self.spin_interval.setDecimals(1)
-        self.spin_interval.setValue(10.0)
+        self.spin_interval.setValue(1.0)
         self.spin_interval.setSuffix(" s")
         self.spin_interval.setFixedWidth(84)
         self.spin_interval.setToolTip(
@@ -647,6 +647,18 @@ class DarkFieldPanel(QWidget):
             return
         QMessageBox.information(self, "Dark Field",
                                 f"Uloženo {len(self.series)} měření do\n{path}")
+
+    def autoSaveSeries(self, folder: str) -> str:
+        """Uloží tabulku bez ptaní. Vrací cestu, nebo "" když není co uložit.
+
+        Volá se při zastavení měření – naměřená řada se tím nikdy neztratí,
+        i když si uživatel „Uložit CSV…“ nevzpomene."""
+        if not len(self.series):
+            return ""
+        os.makedirs(folder, exist_ok=True)
+        path = df.default_csv_name(folder)
+        self.series.to_csv(path, self.settings(), self.bias)
+        return path
 
     def summaryText(self) -> str:
         if not len(self.series):

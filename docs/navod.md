@@ -97,6 +97,9 @@ levého panelu. Do jednoho souboru JSON jde všechno najednou:
 * Dark Field – interval, práh, minimální částice, ukládání snímků,
 * snímání – pracovní složka, interval časosběru, kalibrace měřítka.
 
+Soubory s nastavením se ukládají do podsložky `nastavení` v pracovní složce
+(sama se založí), takže se nemíchají mezi fotky.
+
 **Načíst…** to vrátí zpátky. Co v souboru chybí nebo čemu kamera nerozumí,
 se přeskočí a program napíše do stavového řádku, co se použilo a co ne –
 soubor z jiné verze tedy nezpůsobí nic horšího než neúplné obnovení.
@@ -179,10 +182,16 @@ je jen shrnutí kroků:
 2. Vložte **čisté sklíčko** a v záložce *Dark* dejte **Pořídit** referenci.
    Zprůměruje se 16 snímků (jde změnit). Referenci si můžete **Uložit** a
    příště jen **Načíst**.
-3. Vyměňte sklíčko za měřené, nastavte **interval** (výchozí 10 s) a dejte
+   Reference se navíc **uloží sama** do podsložky `reference` v pracovní
+   složce – vedle `.npz` vznikne i JSON s popisem podmínek (expozice, zisk,
+   osvětlení, práh), aby bylo za měsíc jasné, k čemu patří.
+3. Vyměňte sklíčko za měřené, nastavte **interval** (výchozí 1 s) a dejte
    **Spustit měření**.
-4. Průběh sledujte v **Tabulka a graf…**, výsledky uložte tlačítkem **CSV…**
-   (středníky a BOM, takže to český Excel otevře rovnou).
+4. Průběh sledujte v **Tabulka a graf…**. Po **Zastavit měření** se tabulka
+   uloží do CSV sama (ke snímkům toho běhu, jinak do pracovní složky); cesta
+   se vypíše do stavového řádku. Tlačítko **CSV…** zůstává pro uložení jinam.
+5. Další **Spustit měření** začíná s prázdnou tabulkou i grafem – předchozí
+   řada je už uložená.
 
 ### Měření po kanálech
 
@@ -218,7 +227,7 @@ Rozbor 4K snímku trvá desetiny sekundy a běží ve vlastním vlákně, aby
 neblokoval okno. Když ho nastavíte na kratší interval, než jak dlouho rozbor
 trvá, snímky se **zahazují** místo aby se hromadily – po zastavení měření to
 program napíše do stavového řádku. Kontaminace roste v minutách, takže
-interval 10 s je pro většinu měření až až; pod 1 s nemá smysl chodit.
+interval 1 s je výchozí; u 4K a pomalejšího počítače je klidnější 5–10 s.
 
 ---
 

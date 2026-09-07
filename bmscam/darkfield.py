@@ -178,16 +178,29 @@ class BiasSet:
                                       " · ".join(parts))
 
     # ------------------------------------------------------------ soubor ---
-    def save(self, path: str) -> None:
+    def save(self, path: str, note: str = "") -> None:
+        """Uloží sadu; „note“ je popis podmínek, za kterých vznikla.
+
+        Popis se ukládá do souboru schválně – reference bez informace
+        o expozici a osvětlení se po pár týdnech nedá k ničemu použít."""
         data = {}
         for channel, bias in self.items.items():
             tag = channel or "mono"
             data[f"mean_{tag}"] = bias.mean
             data[f"frames_{tag}"] = bias.frames
             data[f"created_{tag}"] = bias.created.isoformat()
+            data[f"note_{tag}"] = note or bias.note
         if not data:
             raise ValueError("Není co uložit – reference není pořízená.")
+        data["note"] = note
         np.savez_compressed(path, **data)
+
+    def note(self) -> str:
+        """Popis podmínek uložený u reference (prázdný, když chybí)."""
+        for bias in self.items.values():
+            if bias.note:
+                return bias.note
+        return ""
 
     @classmethod
     def load(cls, path: str) -> "BiasSet":
@@ -213,7 +226,8 @@ class BiasSet:
             except (KeyError, ValueError):
                 pass
             frames = int(data[f"frames_{tag}"]) if f"frames_{tag}" in data else 1
-            items[channel] = Bias(data[key], frames, created)
+            note = str(data[f"note_{tag}"]) if f"note_{tag}" in data else ""
+            items[channel] = Bias(data[key], frames, created, note)
         if not items:
             raise ValueError("Soubor neobsahuje žádnou referenci.")
         return cls(items)

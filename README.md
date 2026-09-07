@@ -60,7 +60,10 @@ Zdrojový návrh je v [docs/design](docs/design/).
   rozboru temného pole i snímání (pracovní složka, interval časosběru, měřítko).
   Soubor se dá přiložit k naměřeným datům, takže je za měsíc jasné, za jakých
   podmínek vznikla. Starší profily, které měly jen vlastnosti kamery, se načtou
-  taky.
+  taky. Soubory leží v podsložce `nastavení` uvnitř pracovní složky.
+* **Nic se neztratí** – zastavení měření uloží tabulku do CSV samo a nové
+  spuštění začne s čistým grafem; pořízená reference se ukládá automaticky
+  i s popisem podmínek, za kterých vznikla.
 * **Kontrola stálosti expozice** (☰ → *Kontrola stálosti expozice…*) – sleduje
   deset sekund hodnoty čtené z kamery i střední jas obrazu a řekne, jestli
   expozici něco nedorovnává na pozadí. Před měřením kontaminace se to vyplatí

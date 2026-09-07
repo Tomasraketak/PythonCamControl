@@ -15,12 +15,16 @@ tmavé a všechno, co na něm ulpí, rozptyluje světlo a svítí.
    čímž potlačí šum senzoru. Reference zachytí i to, co není kontaminace:
    nerovnoměrné osvětlení, prach na optice, vadné pixely. To všechno se
    pak z měření odečte.
-   Referenci jde uložit (`.npz`) a příště načíst – ale jen když se od té
-   doby nezměnila expozice, zisk, osvětlení ani rozlišení.
+   Reference se po pořízení **uloží automaticky** do podsložky `reference`
+   v pracovní složce, spolu s JSON popisem podmínek (expozice, zisk,
+   osvětlení, práh). Popis se zapisuje i dovnitř `.npz`. Načíst ji jde
+   kdykoli později – ale platí jen tehdy, když se od té doby nezměnila
+   expozice, zisk, osvětlení ani rozlišení.
 3. **Nastavte práh.** Viz níže.
-4. **Spusťte měření.** V zadaném intervalu (výchozích 10 s) se vyhodnotí
+4. **Spusťte měření.** V zadaném intervalu (výchozí 1 s) se vyhodnotí
    snímek a přibude řádek do tabulky. **Tabulka a graf…** otevře okno
-   s průběhem, **CSV…** ho uloží.
+   s průběhem. Zastavení měření tabulku uloží do CSV samo a další spuštění
+   začne s prázdnou řadou.
 
 ## Měření po kanálech (R → G → B)
 

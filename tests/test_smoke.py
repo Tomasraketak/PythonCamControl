@@ -1167,8 +1167,8 @@ def test_darkfield_panel_offers_reanalysis_and_frame_storage():
     _app()
     panel = DarkFieldPanel()
     try:
-        # Výchozí interval je 10 s – živý rozbor každou sekundu je zbytečná zátěž.
-        assert panel.spin_interval.value() == 10.0
+        # Výchozí interval je 1 s, jak si uživatel přál.
+        assert panel.spin_interval.value() == 1.0
         assert panel.wantsStoredFrames()
         assert panel.settings().store_frames
 
@@ -1511,6 +1511,107 @@ def test_darkfield_multichannel_reanalysis_keeps_channels():
         assert bad.samples[1].coverage_pct > 99.0, bad.samples[1].coverage_pct
         assert bad.samples[2].coverage_pct > 99.0, bad.samples[2].coverage_pct
     finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+
+
+def test_measurement_autosaves_and_starts_a_fresh_series():
+    """Zastavení uloží tabulku, spuštění začne s prázdnou řadou."""
+    import glob as _glob
+    import shutil
+    import tempfile
+
+    from bmscam.ui.main_window import MainWindow
+
+    _app()
+    folder = tempfile.mkdtemp()
+    win = MainWindow(prefer_demo=True)
+    try:
+        win.save_dir = folder
+        win.df_panel.addSample({"coverage_pct": 1.0, "particles": 2,
+                                "area_px": 10, "threshold": 5.0})
+        assert len(win.df_panel.series) == 1
+
+        win._onDarkFieldToggled(False, 1.0)          # zastavení měření
+        csvs = _glob.glob(os.path.join(folder, "*.csv"))
+        assert len(csvs) == 1, csvs
+
+        # Nové spuštění vyžaduje kameru; řada se maže hned po jejím ověření.
+        win.connectCamera()
+        win._onDarkFieldToggled(True, 1.0)
+        assert len(win.df_panel.series) == 0
+        win._onDarkFieldToggled(False, 1.0)
+    finally:
+        win.close()
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def test_settings_go_to_their_own_folder():
+    """Nastavení se ukládá do podsložky „nastavení“, která se sama založí."""
+    import shutil
+    import tempfile
+
+    from bmscam import workspace
+    from bmscam.ui.main_window import MainWindow
+
+    _app()
+    folder = tempfile.mkdtemp()
+    win = MainWindow(prefer_demo=True)
+    try:
+        win.save_dir = os.path.join(folder, "BMS fotky")
+        target = win._settingsDir()
+        assert os.path.isdir(target)
+        assert os.path.basename(target) == workspace.SETTINGS_FOLDER
+        assert workspace.default_name(target).startswith(target)
+    finally:
+        win.close()
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def test_reference_is_saved_automatically_with_its_conditions():
+    """Reference se uloží sama a vedle ní i popis nastavení."""
+    import glob as _glob
+    import json
+    import shutil
+    import tempfile
+    import time as _time
+
+    from bmscam import darkfield as df
+    from bmscam.ui.main_window import MainWindow
+
+    app = _app()
+    folder = tempfile.mkdtemp()
+    win = MainWindow(prefer_demo=True)
+    win.connectCamera()
+    try:
+        win.save_dir = folder
+        deadline = _time.time() + 5.0
+        while _time.time() < deadline and not win.view.hasImage():
+            app.processEvents()
+            _time.sleep(0.02)
+
+        win.startBiasCapture(2)
+        deadline = _time.time() + 10.0
+        while _time.time() < deadline and not win.df_panel.bias:
+            app.processEvents()
+            _time.sleep(0.01)
+        assert win.df_panel.bias, "reference nepřišla"
+
+        ref_dir = os.path.join(folder, "reference")
+        npz = _glob.glob(os.path.join(ref_dir, "*.npz"))
+        meta = _glob.glob(os.path.join(ref_dir, "*.json"))
+        assert len(npz) == 1 and len(meta) == 1, (npz, meta)
+
+        # popis podmínek jde přečíst zpátky ze souboru s referencí
+        loaded = df.BiasSet.load(npz[0])
+        assert loaded.note(), "u reference chybí popis nastavení"
+        with open(meta[0], encoding="utf-8") as fh:
+            data = json.load(fh)
+        assert data["reference"]["file"] == os.path.basename(npz[0])
+        assert "darkfield" in data and "leds" in data
+    finally:
+        win.close()
         shutil.rmtree(folder, ignore_errors=True)
 
 
