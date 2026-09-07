@@ -232,7 +232,9 @@ Po **Zastavit měření** se zbytek fronty dopočítá – okno na to ukáže uk
 průběhu s tlačítkem *Zahodit zbytek*, kdyby se vám nechtělo čekat. Teprve pak
 se tabulka uloží do CSV, takže v ní jsou i dopočítané body.
 
-Fronta je omezená objemem dat (půl gigabajtu, tedy zhruba 60 snímků ve 4K).
+Fronta drží snímky v **operační paměti** a je omezená na 3 GB, tedy zhruba
+380 snímků ve 4K – přes šest minut snímání po sekundě. (Archiv snímků na
+disku je něco jiného: ten zabírá místo na SSD, ne v paměti.)
 Kdyby se přeplnila, snímky se zahodí – ale když se přitom archivují na disk,
 aplikace po zastavení sama nabídne dopočítat celé měření z uložených snímků.
 

@@ -320,8 +320,6 @@ class LedPanel(QWidget):
         lay.setSpacing(theme.SPACE_2)
         lay.addWidget(label("Jednotlivé strany", "section"))
 
-        grid = QGridLayout()
-        grid.setSpacing(5)
         self.panels: List[PanelWidget] = []
         for i in range(PANELS):
             widget = PanelWidget(i + 1)
@@ -332,6 +330,10 @@ class LedPanel(QWidget):
             widget.copyToAllRequested.connect(self._onCopyToAll)
             self.panels.append(widget)
 
+        lay.addWidget(self._buildCross())
+
+        grid = QGridLayout()
+        grid.setSpacing(5)
         grid.addWidget(self.panels[0], 0, 0, 1, 2)      # horní
         grid.addWidget(self.panels[3], 1, 0)            # levá
         grid.addWidget(self.panels[1], 1, 1)            # pravá
@@ -355,6 +357,54 @@ class LedPanel(QWidget):
         self.cmb_rotation.activated.connect(self._onRotationChosen)
         lay.addLayout(row(label("Natočení", "meta"), None, (self.cmb_rotation, 2)))
         return box
+
+    def _buildCross(self) -> QWidget:
+        """Zapínání stran rozmístěné do kříže – jako moduly kolem objektivu.
+
+        Podrobné ovládání (jas, barva) zůstává v kartách pod tím; tady jde
+        jen o to, aby šlo stranu zhasnout tam, kde ve skutečnosti leží."""
+        box = QWidget()
+        grid = QGridLayout(box)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(4)
+
+        self.cross_buttons: List[QPushButton] = []
+        for index in range(PANELS):
+            btn = QPushButton(PANEL_NAMES[index])
+            btn.setCheckable(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip("Zapnout / vypnout osvětlení {}"
+                           .format(PANEL_SHORT[index]))
+            btn.setStyleSheet(
+                f"QPushButton {{ border:1px solid {theme.DIVIDER}; padding:6px 4px;"
+                "font-size:11px; }"
+                f"QPushButton:checked {{ background:{theme.ACCENT}; color:white;"
+                f" border-color:{theme.ACCENT}; }}")
+            btn.clicked.connect(
+                lambda on, i=index: self.panels[i].chk_on.setChecked(on))
+            # karta a tlačítko v kříži ukazují jeden a týž stav
+            self.panels[index].chk_on.toggled.connect(
+                lambda on, i=index: self._syncCross(i, on))
+            self.cross_buttons.append(btn)
+
+        middle = label("objektiv", "meta")
+        middle.setAlignment(Qt.AlignCenter)
+
+        grid.addWidget(self.cross_buttons[0], 0, 1)     # horní
+        grid.addWidget(self.cross_buttons[3], 1, 0)     # levá
+        grid.addWidget(middle, 1, 1)
+        grid.addWidget(self.cross_buttons[1], 1, 2)     # pravá
+        grid.addWidget(self.cross_buttons[2], 2, 1)     # dolní
+        for column in range(3):
+            grid.setColumnStretch(column, 1)
+        return box
+
+    def _syncCross(self, index: int, on: bool) -> None:
+        button_ = self.cross_buttons[index]
+        if button_.isChecked() != on:
+            button_.blockSignals(True)
+            button_.setChecked(on)
+            button_.blockSignals(False)
 
     def _buildConsoleBox(self) -> QWidget:
         box = QWidget()

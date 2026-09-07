@@ -1689,6 +1689,41 @@ def test_stopping_measurement_finishes_the_backlog():
         shutil.rmtree(folder, ignore_errors=True)
 
 
+def test_led_cross_buttons_follow_the_real_layout():
+    """Zapínání stran je v kříži a drží stejný stav jako karty."""
+    from bmscam.leds import PANEL_NAMES
+    from bmscam.ui.led_panel import LedPanel
+
+    app = _app()
+    panel = LedPanel()
+    try:
+        assert len(panel.cross_buttons) == 4
+        grid = panel.cross_buttons[0].parentWidget().layout()
+
+        def cell(widget):
+            index = grid.indexOf(widget)
+            row_, col, _, _ = grid.getItemPosition(index)
+            return row_, col
+
+        # horní nahoře uprostřed, levá vlevo, pravá vpravo, dolní dole
+        assert cell(panel.cross_buttons[0]) == (0, 1)
+        assert cell(panel.cross_buttons[3]) == (1, 0)
+        assert cell(panel.cross_buttons[1]) == (1, 2)
+        assert cell(panel.cross_buttons[2]) == (2, 1)
+        assert panel.cross_buttons[0].text() == PANEL_NAMES[0]
+
+        # tlačítko přepne kartu a karta přepne tlačítko
+        panel.cross_buttons[1].setChecked(True)
+        panel.cross_buttons[1].clicked.emit(True)
+        app.processEvents()
+        assert panel.panels[1].isOn()
+        panel.panels[1].chk_on.setChecked(False)
+        app.processEvents()
+        assert not panel.cross_buttons[1].isChecked()
+    finally:
+        panel.shutdown()
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

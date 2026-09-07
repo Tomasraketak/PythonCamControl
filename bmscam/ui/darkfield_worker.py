@@ -11,7 +11,8 @@ Snímky, které rozbor nestíhá zpracovat hned, čekají ve frontě a dopočít
 se se zpožděním – během měření se graf plní tak, jak výsledky přicházejí,
 a zbytek se dopočítá po jeho zastavení. Fronta je omezená objemem dat
 (ne počtem snímků), aby se při dlouhém měření nevyčerpala paměť: jeden
-šedotónový 4K snímek zabere osm megabajtů. Teprve při překročení limitu se
+šedotónový 4K snímek zabere v RAM osm megabajtů, takže tři gigabajty stačí
+zhruba na šest minut snímání po sekundě. Teprve při překročení limitu se
 snímek zahodí – a když se přitom archivují na disk, dá se dopočítat zpětným
 rozborem.
 """
@@ -82,8 +83,9 @@ class DarkFieldRunner(QObject):
     _startBias = pyqtSignal(int)
     _cancelBias = pyqtSignal()
 
-    #: kolik dat smí čekat ve frontě (jeden 4K snímek = 8 MB)
-    MAX_QUEUED_BYTES = 512 * 1024 * 1024
+    #: kolik dat smí čekat ve frontě v paměti (jeden 4K snímek = 8 MB);
+    #: tři gigabajty vydrží asi 380 snímků, tedy přes šest minut po sekundě
+    MAX_QUEUED_BYTES = 3 * 1024 * 1024 * 1024
 
     def __init__(self, parent=None):
         super().__init__(parent)

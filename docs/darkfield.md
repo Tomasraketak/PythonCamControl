@@ -100,7 +100,8 @@ okno, běží ve vlastním vlákně – v obsluze snímku se dělá jen šedotó
 kopie, dokud jsou data platná. Snímky, které rozbor nestíhá, čekají ve
 frontě a dopočítají se se zpožděním – graf se plní průběžně a po zastavení
 měření se zbytek dopočítá (s možností ho zahodit). Fronta je omezená
-objemem dat (půl gigabajtu, tedy asi 60 snímků ve 4K); při jejím přeplnění
+objemem dat v RAM (3 GB, tedy asi 380 snímků ve 4K – přes šest minut
+snímání po sekundě); při jejím přeplnění
 se snímky zahazují, ale z archivovaných snímků je pak jde dopočítat
 zpětným rozborem, což aplikace sama nabídne.
 
