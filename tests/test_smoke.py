@@ -1082,6 +1082,32 @@ def test_demo_camera_renders_outside_pull():
         cam.stop()
 
 
+def test_darkfield_frame_store_handles_accented_path():
+    """Cesta s diakritikou musí projít – cv2.imwrite na ní na Windows selže."""
+    import shutil
+    import tempfile
+
+    import numpy as np
+
+    from bmscam import darkfield as df
+
+    root = tempfile.mkdtemp()
+    folder = os.path.join(root, "Tomáš Michal", "BMS fotky", "měření")
+    try:
+        store = df.FrameStore(folder)
+        original = np.zeros((40, 60), np.uint8)
+        original[10:20, 15:25] = 200
+        path = store.save(original)
+        assert os.path.isfile(path), path
+        assert os.path.getsize(path) > 0
+
+        back = df.FrameStore.load_frame(path)
+        assert np.array_equal(back, original), "snímek se nevrátil beze změny"
+        assert df.FrameStore.list_frames(folder) == [path]
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

@@ -396,8 +396,14 @@ class FrameStore:
         cv2 = self._cv2()
         if cv2 is not None:
             path = base + ".png"
-            if not cv2.imwrite(path, data):
-                raise OSError(f"Snímek se nepodařilo zapsat: {path}")
+            # Soubor otevírá Python, ne OpenCV. cv2.imwrite si totiž cestu
+            # převádí do systémového kódování a na Windows selže na každé
+            # diakritice – třeba na jménu uživatele ve složce Downloads.
+            ok, encoded = cv2.imencode(".png", data)
+            if not ok:
+                raise OSError(f"Snímek se nepodařilo zakódovat: {path}")
+            with open(path, "wb") as fh:
+                fh.write(encoded.tobytes())
         else:
             path = base + ".npz"
             np.savez_compressed(path, gray=data)
@@ -432,7 +438,11 @@ class FrameStore:
             raise ValueError(
                 "Snímky ve formátu PNG umí načíst jen OpenCV "
                 "(pip install opencv-python).")
-        image = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+        # Čte se přes numpy ze stejného důvodu, z jakého se přes něj zapisuje:
+        # cv2.imread neumí cestu s diakritikou.
+        with open(path, "rb") as fh:
+            raw = np.frombuffer(fh.read(), dtype=np.uint8)
+        image = cv2.imdecode(raw, cv2.IMREAD_GRAYSCALE)
         if image is None:
             raise ValueError(f"Snímek se nepodařilo načíst: {path}")
         return image
