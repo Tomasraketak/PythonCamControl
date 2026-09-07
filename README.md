@@ -62,7 +62,8 @@ Zdrojový návrh je v [docs/design](docs/design/).
   podmínek vznikla. Starší profily, které měly jen vlastnosti kamery, se načtou
   taky. Soubory leží v podsložce `nastavení` uvnitř pracovní složky.
 * **Nic se neztratí** – zastavení měření uloží tabulku do CSV samo a nové
-  spuštění začne s čistým grafem; pořízená reference se ukládá automaticky
+  spuštění začne s čistým grafem; snímky, na které rozbor nestačí, čekají ve
+  frontě a dopočítají se (zbytek po zastavení měření), místo aby se zahazovaly; pořízená reference se ukládá automaticky
   i s popisem podmínek, za kterých vznikla.
 * **Kontrola stálosti expozice** (☰ → *Kontrola stálosti expozice…*) – sleduje
   deset sekund hodnoty čtené z kamery i střední jas obrazu a řekne, jestli

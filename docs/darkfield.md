@@ -97,10 +97,12 @@ posledního.
 
 Rozbor 4K snímku trvá kolem desetiny sekundy. Aby kvůli němu neztuhlo
 okno, běží ve vlastním vlákně – v obsluze snímku se dělá jen šedotónová
-kopie, dokud jsou data platná. Fronta má hloubku jedna: když rozbor
-nestíhá zadaný interval, snímek se **zahodí** místo aby se hromadil,
-a po zastavení měření to program napíše do stavového řádku. Když se to
-stává, prodlužte interval.
+kopie, dokud jsou data platná. Snímky, které rozbor nestíhá, čekají ve
+frontě a dopočítají se se zpožděním – graf se plní průběžně a po zastavení
+měření se zbytek dopočítá (s možností ho zahodit). Fronta je omezená
+objemem dat (půl gigabajtu, tedy asi 60 snímků ve 4K); při jejím přeplnění
+se snímky zahazují, ale z archivovaných snímků je pak jde dopočítat
+zpětným rozborem, což aplikace sama nabídne.
 
 Úroveň pozadí a šum se počítají z rovnoměrného vzorku pixelů, ne z celého
 snímku. Na 4K je to rozdíl mezi stovkami milisekund a jednotkami

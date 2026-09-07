@@ -694,6 +694,7 @@ class MainWindow(QMainWindow):
 
     def _onDarkFieldSample(self, metrics, when) -> None:
         self.df_panel.addSample(metrics, when)
+        self.df_panel.setPendingInfo(self.df_runner.pending)
         if self._df_store is not None:
             self.df_panel.setStoreInfo(self._df_store)
         if self._mc_mode == "measure":
@@ -838,15 +839,63 @@ class MainWindow(QMainWindow):
             if self._mc_mode:
                 self._mc_queue = []
                 self._finishChannelCycle()
+            self._drainPending()
+            self.df_panel.setPendingInfo(0)
             saved = self._autoSaveSeries()
             if saved:
                 self.statusMessage("Měření uloženo: " + saved, 8000)
-            if self.df_runner.dropped:
+            elif self.df_runner.dropped:
                 self.statusMessage(
-                    "Měření zastaveno – {} snímků se nestihlo zpracovat, "
-                    "zkuste delší interval".format(self.df_runner.dropped), 8000)
+                    "Měření zastaveno – {} snímků se nestihlo zpracovat."
+                    .format(self.df_runner.dropped), 8000)
             else:
                 self.statusMessage("Měření kontaminace zastaveno", 3000)
+            if self.df_runner.dropped and self._df_store is not None:
+                self._offerDroppedReanalysis()
+
+    def _drainPending(self) -> None:
+        """Počká, než se dopočítají snímky, které ještě čekají ve frontě.
+
+        Měření se zastavuje, ale zbývající snímky jsou už pořízené – dopočítat
+        je stojí jen čas, zatímco zahodit je znamená díru v řadě."""
+        pending = self.df_runner.pending
+        if pending <= 1:
+            return
+        dialog = QProgressDialog(
+            "Dopočítávám zbývající snímky…", "Zahodit zbytek", 0, pending, self)
+        dialog.setWindowTitle(APP_NAME)
+        dialog.setWindowModality(Qt.WindowModal)
+        dialog.setMinimumDuration(0)
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+        while self.df_runner.pending:
+            if dialog.wasCanceled():
+                self.df_runner.clearQueue()
+                break
+            dialog.setValue(pending - self.df_runner.pending)
+            dialog.setLabelText("Dopočítávám zbývající snímky… ({})"
+                                .format(self.df_runner.pending))
+            QApplication.processEvents()
+            time.sleep(0.01)
+        dialog.close()
+
+    def _offerDroppedReanalysis(self) -> None:
+        """Nabídne dopočítání snímků, na které se nevešla fronta.
+
+        Zahodit se snímek může jen při přeplněné frontě; když se přitom
+        archivoval na disk, není důvod o to měření přijít."""
+        folder = self._df_store.directory
+        paths = darkfield.FrameStore.list_frames(folder)
+        if not paths:
+            return
+        answer = QMessageBox.question(
+            self, APP_NAME,
+            "{} snímků se do fronty nevešlo a rozbor je vynechal.\n\n"
+            "Uložené snímky ale na disku jsou – spočítat celé měření znovu "
+            "z nich ({} snímků)?".format(self.df_runner.dropped, len(paths)),
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if answer == QMessageBox.Yes:
+            self._runReanalysis(paths)
 
     def _autoSaveSeries(self) -> str:
         """Uloží naměřenou řadu do CSV hned po zastavení měření.
@@ -942,10 +991,11 @@ class MainWindow(QMainWindow):
         platí jen do příchodu dalšího, takže je nejde vlákna nechat číst
         přímo. Všechno ostatní (medián, prahování, zápis na disk) běží
         až tam."""
-        if self.df_runner.busy:
-            return                          # ještě se počítá, tenhle vynecháme
         collecting = self.df_runner.collecting_bias
         if collecting:
+            if self.df_runner.busy:
+                return                      # reference se sbírá po jednom
+
             # Reference se sbírá po dávkách, ne z každého snímku za sebou –
             # jinak by okno na dobu snímání ztuhlo.
             now = time.time()
@@ -1000,6 +1050,10 @@ class MainWindow(QMainWindow):
             if answer != QMessageBox.Yes:
                 return
 
+        self._runReanalysis(paths)
+
+    def _runReanalysis(self, paths) -> None:
+        """Spočítá řadu ze zadaných souborů a nahradí jí tabulku."""
         dialog = QProgressDialog("Počítám znovu…", "Zrušit", 0, len(paths), self)
         dialog.setWindowTitle(APP_NAME)
         dialog.setWindowModality(Qt.WindowModal)

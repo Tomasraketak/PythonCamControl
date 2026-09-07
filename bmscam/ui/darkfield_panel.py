@@ -397,6 +397,9 @@ class DarkFieldPanel(QWidget):
         self.lbl_store = label("", "meta")
         self.lbl_store.setWordWrap(True)
         card.add(self.lbl_store)
+        self.lbl_pending = label("", "meta")
+        self.lbl_pending.setWordWrap(True)
+        card.add(self.lbl_pending)
 
         self.btn_measure = button("Spustit měření", "primary")
         self.btn_measure.setCheckable(True)
@@ -506,6 +509,12 @@ class DarkFieldPanel(QWidget):
         self.lbl_store.setText("{} · {} snímků · {:.1f} MB"
                                .format(os.path.basename(store.directory),
                                        store.count, size))
+
+    def setPendingInfo(self, pending: int) -> None:
+        """Kolik snímků čeká na rozbor – aby bylo vidět, že se něco dopočítává."""
+        self.lbl_pending.setText(
+            "" if pending <= 1 else
+            f"Čeká na rozbor: {pending - 1} snímků (dopočítají se se zpožděním)")
 
     def wantsRoi(self) -> bool:
         return self.chk_roi.isChecked()

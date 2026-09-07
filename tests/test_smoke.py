@@ -1139,19 +1139,19 @@ def test_darkfield_worker_runs_off_the_gui_thread():
         gray[20:26, 30:36] = 180
         assert runner.submit(gray, bias, df.Settings(sigma=4.0, min_area_px=2),
                              datetime.now())
-        # druhý snímek se má zahodit, dokud se počítá ten první
-        runner.submit(gray, bias, df.Settings(), datetime.now())
+        # druhý snímek počká ve frontě, nezahodí se
+        assert runner.submit(gray, bias, df.Settings(), datetime.now())
 
         deadline = _time.time() + 10.0
-        while _time.time() < deadline and not results:
+        while _time.time() < deadline and len(results) < 2:
             app.processEvents()
             _time.sleep(0.01)
-        assert results, "výsledek nepřišel"
+        assert len(results) == 2, results
         assert results[0]["particles"] in (-1, 1)
         assert not runner.busy
         # výsledek se ohlásí ve vlákně GUI, ale spočítal se jinde
         assert threads[0] == gui_thread
-        assert runner.dropped == 1
+        assert runner.dropped == 0
     finally:
         runner.shutdown()
 
@@ -1610,6 +1610,80 @@ def test_reference_is_saved_automatically_with_its_conditions():
             data = json.load(fh)
         assert data["reference"]["file"] == os.path.basename(npz[0])
         assert "darkfield" in data and "leds" in data
+    finally:
+        win.close()
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def test_runner_queues_frames_instead_of_dropping_them():
+    """Když rozbor nestíhá, snímky čekají ve frontě a dopočítají se."""
+    import time as _time
+
+    import numpy as np
+
+    from bmscam import darkfield as df
+    from bmscam.ui.darkfield_worker import DarkFieldRunner
+
+    app = _app()
+    runner = DarkFieldRunner()
+    try:
+        got = []
+        runner.sampleReady.connect(lambda m, w: got.append(m))
+        gray = np.zeros((64, 64), "uint8")
+        gray[10:14, 10:14] = 200
+        settings = df.Settings()
+        for _ in range(5):
+            assert runner.submit(gray.copy(), None, settings, None)
+        assert runner.pending > 1, "fronta se vůbec nenaplnila"
+
+        deadline = _time.time() + 10.0
+        while _time.time() < deadline and len(got) < 5:
+            app.processEvents()
+            _time.sleep(0.01)
+        assert len(got) == 5, got
+        assert runner.dropped == 0
+        assert runner.pending == 0
+
+        # Fronta je omezená objemem dat, ne počtem snímků.
+        runner.max_queued_bytes = gray.nbytes * 2
+        runner.busy = True                      # nikdo teď frontu nevybírá
+        accepted = [runner.submit(gray.copy(), None, settings, None)
+                    for _ in range(5)]
+        assert accepted[0] and not accepted[-1], accepted
+        assert runner.dropped > 0
+        assert runner.clearQueue() > 0
+    finally:
+        runner.shutdown()
+
+
+def test_stopping_measurement_finishes_the_backlog():
+    """Zastavení měření dopočítá, co ještě viselo ve frontě."""
+    import shutil
+    import tempfile
+    import time as _time
+
+    import numpy as np
+
+    from bmscam import darkfield as df
+    from bmscam.ui.main_window import MainWindow
+
+    app = _app()
+    folder = tempfile.mkdtemp()
+    win = MainWindow(prefer_demo=True)
+    try:
+        win.save_dir = folder
+        gray = np.zeros((64, 64), "uint8")
+        settings = df.Settings()
+        for _ in range(4):
+            win.df_runner.submit(gray.copy(), None, settings, None)
+        assert win.df_runner.pending > 1
+
+        win._onDarkFieldToggled(False, 1.0)     # zastavení měření
+        assert win.df_runner.pending == 0, "fronta se nedopočítala"
+        assert len(win.df_panel.series) == 4
+        assert win.df_runner.dropped == 0
+        for _ in range(5):
+            app.processEvents()
     finally:
         win.close()
         shutil.rmtree(folder, ignore_errors=True)

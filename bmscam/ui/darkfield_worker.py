@@ -7,11 +7,16 @@ ani přepnout záložku. Proto je to tady odsunuté do vlastního vlákna a hlav
 okno si nechává jen to nejlevnější: vytáhnout ze snímku šedotónovou kopii,
 dokud jsou data platná.
 
-Fronta má hloubku jedna. Když rozbor nestíhá, další snímek se zahodí místo
-toho, aby se hromadil – u měření po sekundách je lepší jedno měření vynechat
-než mít frontu, která roste do paměti a zpožďuje se za skutečností.
+Snímky, které rozbor nestíhá zpracovat hned, čekají ve frontě a dopočítají
+se se zpožděním – během měření se graf plní tak, jak výsledky přicházejí,
+a zbytek se dopočítá po jeho zastavení. Fronta je omezená objemem dat
+(ne počtem snímků), aby se při dlouhém měření nevyčerpala paměť: jeden
+šedotónový 4K snímek zabere osm megabajtů. Teprve při překročení limitu se
+snímek zahodí – a když se přitom archivují na disk, dá se dopočítat zpětným
+rozborem.
 """
 
+from collections import deque
 from typing import Optional
 
 from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
@@ -77,11 +82,17 @@ class DarkFieldRunner(QObject):
     _startBias = pyqtSignal(int)
     _cancelBias = pyqtSignal()
 
+    #: kolik dat smí čekat ve frontě (jeden 4K snímek = 8 MB)
+    MAX_QUEUED_BYTES = 512 * 1024 * 1024
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.busy = False
         self.collecting_bias = False
-        self.dropped = 0                # kolik snímků se zahodilo, když se nestíhalo
+        self.dropped = 0                # zahozené snímky (fronta byla plná)
+        self.max_queued_bytes = self.MAX_QUEUED_BYTES
+        self._queue = deque()
+        self.queued_bytes = 0
 
         self._thread = QThread()
         self._thread.setObjectName("dark-field")
@@ -100,13 +111,34 @@ class DarkFieldRunner(QObject):
 
     # ------------------------------------------------------------ zadání ---
     def submit(self, gray, bias, settings, when, store=None, channel="") -> bool:
-        """Pošle snímek k rozboru. False = vlákno nestíhá, snímek se zahodil."""
-        if self.busy:
+        """Zařadí snímek k rozboru.
+
+        Vrací False jen tehdy, když je fronta plná a snímek se zahodil."""
+        job = (gray, bias, settings, when, store, channel)
+        if not self.busy:
+            self.busy = True
+            self._submit.emit(*job)
+            return True
+        size = int(getattr(gray, "nbytes", 0))
+        if self.queued_bytes + size > self.max_queued_bytes and self._queue:
             self.dropped += 1
             return False
-        self.busy = True
-        self._submit.emit(gray, bias, settings, when, store, channel)
+        self._queue.append(job)
+        self.queued_bytes += size
         return True
+
+    @property
+    def pending(self) -> int:
+        """Kolik snímků ještě čeká na rozbor (včetně právě počítaného)."""
+        return len(self._queue) + (1 if self.busy else 0)
+
+    def clearQueue(self) -> int:
+        """Zahodí čekající frontu. Vrací počet zahozených snímků."""
+        count = len(self._queue)
+        self._queue.clear()
+        self.queued_bytes = 0
+        self.dropped += count
+        return count
 
     def startBias(self, count: int) -> None:
         self.collecting_bias = True
@@ -118,6 +150,12 @@ class DarkFieldRunner(QObject):
 
     # ------------------------------------------------------------ zpětně ---
     def _onFinished(self) -> None:
+        if self._queue:
+            job = self._queue.popleft()
+            self.queued_bytes -= int(getattr(job[0], "nbytes", 0))
+            self.queued_bytes = max(0, self.queued_bytes)
+            self._submit.emit(*job)
+            return
         self.busy = False
 
     def _onBiasReady(self, bias) -> None:
@@ -130,6 +168,8 @@ class DarkFieldRunner(QObject):
 
     # ------------------------------------------------------------ konec ----
     def shutdown(self) -> None:
+        self._queue.clear()
+        self.queued_bytes = 0
         if self._thread.isRunning():
             self._thread.quit()
             self._thread.wait(3000)

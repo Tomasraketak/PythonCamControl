@@ -224,10 +224,17 @@ zopakovat.
 ### Když měření nestíhá
 
 Rozbor 4K snímku trvá desetiny sekundy a běží ve vlastním vlákně, aby
-neblokoval okno. Když ho nastavíte na kratší interval, než jak dlouho rozbor
-trvá, snímky se **zahazují** místo aby se hromadily – po zastavení měření to
-program napíše do stavového řádku. Kontaminace roste v minutách, takže
-interval 1 s je výchozí; u 4K a pomalejšího počítače je klidnější 5–10 s.
+neblokoval okno. Když je interval kratší než rozbor, snímky se **nezahazují**:
+čekají ve frontě a dopočítají se se zpožděním. Graf se plní tak, jak výsledky
+přicházejí, a pod volbou ukládání je vidět, kolik snímků ještě čeká.
+
+Po **Zastavit měření** se zbytek fronty dopočítá – okno na to ukáže ukazatel
+průběhu s tlačítkem *Zahodit zbytek*, kdyby se vám nechtělo čekat. Teprve pak
+se tabulka uloží do CSV, takže v ní jsou i dopočítané body.
+
+Fronta je omezená objemem dat (půl gigabajtu, tedy zhruba 60 snímků ve 4K).
+Kdyby se přeplnila, snímky se zahodí – ale když se přitom archivují na disk,
+aplikace po zastavení sama nabídne dopočítat celé měření z uložených snímků.
 
 ---
 
