@@ -885,25 +885,201 @@ def test_main_window_darkfield_measures_from_camera():
             _time.sleep(0.02)
         assert win.view.hasImage()
 
+        # Rozbor běží ve vlastním vlákně, výsledek proto přijde až později.
+        def wait_for(check, limit=10.0):
+            deadline = _time.time() + limit
+            while _time.time() < deadline and not check():
+                app.processEvents()
+                _time.sleep(0.01)
+            return check()
+
         win.startBiasCapture(3)
-        deadline = _time.time() + 5.0
-        while _time.time() < deadline and win._bias_collector is not None:
-            app.processEvents()
-            _time.sleep(0.01)
-        assert win.df_panel.bias is not None
+        assert wait_for(lambda: win.df_panel.bias is not None), "reference nepřišla"
         assert win.df_panel.bias.frames == 3
 
         win._requestSample()
-        deadline = _time.time() + 5.0
-        while _time.time() < deadline and win._df_pending:
-            app.processEvents()
-            _time.sleep(0.01)
-        assert len(win.df_panel.series) == 1
+        assert wait_for(lambda: len(win.df_panel.series) == 1), "měření nepřišlo"
         sample = win.df_panel.series.samples[0]
         assert sample.threshold > 0
         assert sample.coverage_pct >= 0.0
     finally:
         win.close()
+
+
+def test_darkfield_background_stats_match_full_median():
+    """Vzorkovaný odhad pozadí musí dát prakticky totéž co plný medián."""
+    import numpy as np
+    from bmscam import darkfield as df
+
+    rng = np.random.default_rng(7)
+    diff = rng.normal(3.0, 2.0, (1200, 1600)).astype(np.float32)
+    diff[400:410, 500:510] = 200.0            # pár částic navíc
+    median, sigma = df.background_stats(diff)
+    full_median = float(np.median(diff))
+    full_sigma = float(np.median(np.abs(diff - full_median))) * 1.4826
+    assert abs(median - full_median) < 0.05, (median, full_median)
+    assert abs(sigma - full_sigma) < 0.05, (sigma, full_sigma)
+
+
+def test_darkfield_frame_store_roundtrip_and_reanalysis():
+    """Uložené snímky jde přečíst zpátky a vyhodnotit znovu jiným prahem."""
+    import shutil
+    import tempfile
+
+    import numpy as np
+    from bmscam import darkfield as df
+
+    folder = tempfile.mkdtemp()
+    try:
+        bias = df.Bias(np.full((90, 120), 10.0, np.float32), 4)
+        store = df.FrameStore(folder)
+        for step in range(3):
+            frame = np.full((90, 120), 10, np.uint8)
+            # každý snímek má o jednu částici víc – kontaminace přibývá
+            for i in range(step + 1):
+                frame[10 + 6 * i:14 + 6 * i, 20:24] = 200
+            store.save(frame)
+        assert store.count == 3
+        assert store.bytes_used() > 0
+
+        paths = df.FrameStore.list_frames(folder)
+        assert len(paths) == 3
+        back = df.FrameStore.load_frame(paths[0])
+        assert back.shape == (90, 120) and back.max() == 200
+
+        settings = df.Settings(sigma=5.0, min_area_px=2)
+        series = df.reanalyze(paths, bias, settings)
+        assert len(series) == 3
+        counts = [int(s.particles) for s in series.samples]
+        assert counts == [1, 2, 3], counts
+        # zpětný rozbor s přísnějším prahem na velikost částice je vyhodí
+        strict = df.Settings(sigma=5.0, min_area_px=1000)
+        assert [int(s.particles) for s in df.reanalyze(paths, bias, strict).samples] \
+            == [0, 0, 0]
+
+        seen = []
+        df.reanalyze(paths, bias, settings,
+                     lambda done, total: seen.append((done, total)) or done < 2)
+        assert seen == [(1, 3), (2, 3)], seen      # zrušeno po druhém snímku
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def test_darkfield_worker_runs_off_the_gui_thread():
+    """Runner spočítá měření ve vlastním vlákně a vrátí je signálem."""
+    import threading
+    import time as _time
+    from datetime import datetime
+
+    import numpy as np
+
+    from bmscam import darkfield as df
+    from bmscam.ui.darkfield_worker import DarkFieldRunner
+
+    app = _app()
+    runner = DarkFieldRunner()
+    try:
+        gui_thread = threading.current_thread().ident
+        threads, results = [], []
+        runner.sampleReady.connect(
+            lambda m, w: (threads.append(threading.current_thread().ident),
+                          results.append(m)))
+
+        bias = df.Bias(np.zeros((60, 80), np.float32), 1)
+        gray = np.zeros((60, 80), np.uint8)
+        gray[20:26, 30:36] = 180
+        assert runner.submit(gray, bias, df.Settings(sigma=4.0, min_area_px=2),
+                             datetime.now())
+        # druhý snímek se má zahodit, dokud se počítá ten první
+        runner.submit(gray, bias, df.Settings(), datetime.now())
+
+        deadline = _time.time() + 10.0
+        while _time.time() < deadline and not results:
+            app.processEvents()
+            _time.sleep(0.01)
+        assert results, "výsledek nepřišel"
+        assert results[0]["particles"] in (-1, 1)
+        assert not runner.busy
+        # výsledek se ohlásí ve vlákně GUI, ale spočítal se jinde
+        assert threads[0] == gui_thread
+        assert runner.dropped == 1
+    finally:
+        runner.shutdown()
+
+
+def test_darkfield_panel_offers_reanalysis_and_frame_storage():
+    """Panel má volby, na kterých stojí zpětný rozbor."""
+    import shutil
+    import tempfile
+
+    from bmscam import darkfield as df
+    from bmscam.ui.darkfield_panel import DarkFieldPanel
+
+    _app()
+    panel = DarkFieldPanel()
+    try:
+        # Výchozí interval je 10 s – živý rozbor každou sekundu je zbytečná zátěž.
+        assert panel.spin_interval.value() == 10.0
+        assert panel.wantsStoredFrames()
+        assert panel.settings().store_frames
+
+        folder = tempfile.mkdtemp()
+        try:
+            store = df.FrameStore(folder)
+            store.save(__import__("numpy").zeros((20, 20), "uint8"))
+            panel.setStoreInfo(store)
+            assert "1 snímků" in panel.lbl_store.text()
+            panel.setStoreInfo(None)
+            assert panel.lbl_store.text() == ""
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+
+        asked = []
+        panel.reanalyzeRequested.connect(lambda: asked.append(True))
+        panel.reanalyzeRequested.emit()
+        assert asked == [True]
+
+        replacement = df.Series()
+        replacement.add({"coverage_pct": 1.0, "particles": 2, "threshold": 5.0})
+        panel.setSeries(replacement)
+        assert len(panel.series) == 1
+    finally:
+        panel.deleteLater()
+
+
+def test_demo_camera_renders_outside_pull():
+    """pull() musí být levný – kreslení patří do vlákna kamery, ne do GUI."""
+    import time as _time
+
+    from bmscam.backends import DemoBackend
+
+    cam = DemoBackend()
+    cam.start(lambda event: None)
+    try:
+        deadline = _time.time() + 5.0
+        while _time.time() < deadline and cam.pull() is None:
+            _time.sleep(0.02)
+        _time.sleep(0.3)                      # ať proběhne aspoň jedno kreslení
+
+        worst = 0.0
+        for _ in range(5):
+            began = _time.perf_counter()
+            frame = cam.pull()
+            worst = max(worst, _time.perf_counter() - began)
+            assert frame is not None
+        # Dokud se kreslilo uvnitř pull(), stálo tohle přes 100 ms na snímek.
+        assert worst < 0.02, f"pull() trvá {worst * 1000:.0f} ms"
+
+        # obraz se opravdu mění, kreslení tedy běží
+        first = bytes(cam.pull().data)
+        changed = False
+        deadline = _time.time() + 3.0
+        while _time.time() < deadline and not changed:
+            _time.sleep(0.05)
+            changed = bytes(cam.pull().data) != first
+        assert changed, "simulovaná kamera nedodává nové snímky"
+    finally:
+        cam.stop()
 
 
 if __name__ == "__main__":

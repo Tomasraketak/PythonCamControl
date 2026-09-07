@@ -151,23 +151,45 @@ class DarkFieldWindow(QDialog):
         lay.addWidget(self.lbl_summary)
         self.refresh()
 
+    def _fillRow(self, r: int, sample) -> None:
+        for c, text in enumerate(sample.as_row()):
+            item = QTableWidgetItem(text)
+            item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.table.setItem(r, c, item)
+
+    def _afterChange(self) -> None:
+        if self.chk_follow.isChecked() and self.panel.series.samples:
+            self.table.scrollToBottom()
+        self.lbl_summary.setText(self.panel.summaryText())
+
     def refresh(self) -> None:
         series = self.panel.series
         key, title = PLOTTABLE[max(0, self.cmb_metric.currentIndex())]
         self.chart.setSeries(series.values("time_s"), series.values(key), title)
-
         self.table.setRowCount(len(series.samples))
         for r, sample in enumerate(series.samples):
-            for c, text in enumerate(sample.as_row()):
-                item = QTableWidgetItem(text)
-                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                self.table.setItem(r, c, item)
-        if self.chk_follow.isChecked() and series.samples:
-            self.table.scrollToBottom()
-        self.lbl_summary.setText(self.panel.summaryText())
+            self._fillRow(r, sample)
+        self._afterChange()
 
     def appendSample(self) -> None:
-        self.refresh()
+        """Doplní jen poslední řádek.
+
+        Přestavovat při každém měření celou tabulku by u dlouhého běhu
+        znamenalo kvadraticky rostoucí práci – po tisícovce měření by se
+        okno zaseklo právě ve chvíli, kdy jsou data nejzajímavější."""
+        series = self.panel.series
+        if not series.samples:
+            self.refresh()
+            return
+        key, title = PLOTTABLE[max(0, self.cmb_metric.currentIndex())]
+        self.chart.setSeries(series.values("time_s"), series.values(key), title)
+        row_index = self.table.rowCount()
+        if row_index != len(series.samples) - 1:
+            self.refresh()                 # tabulka se rozešla s daty
+            return
+        self.table.insertRow(row_index)
+        self._fillRow(row_index, series.samples[-1])
+        self._afterChange()
 
 
 class DarkFieldPanel(QWidget):
@@ -179,6 +201,8 @@ class DarkFieldPanel(QWidget):
     measureToggled = pyqtSignal(bool, float)
     #: jednorázové změření právě teď
     sampleRequested = pyqtSignal()
+    #: spočítat řadu znovu z uložených snímků
+    reanalyzeRequested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -263,10 +287,26 @@ class DarkFieldPanel(QWidget):
         self.spin_interval = QDoubleSpinBox()
         self.spin_interval.setRange(0.2, 3600.0)
         self.spin_interval.setDecimals(1)
-        self.spin_interval.setValue(1.0)
+        self.spin_interval.setValue(10.0)
         self.spin_interval.setSuffix(" s")
         self.spin_interval.setFixedWidth(84)
+        self.spin_interval.setToolTip(
+            "Jak často se měří. Rozbor 4K snímku trvá desetiny sekundy, "
+            "takže krátký interval zbytečně zatěžuje počítač – "
+            "kontaminace roste v minutách, ne v milisekundách.")
         card.add(row(label("Interval", "meta"), None, self.spin_interval))
+
+        self.chk_store = QCheckBox("Ukládat snímky pro zpětný rozbor")
+        self.chk_store.setChecked(True)
+        self.chk_store.setToolTip(
+            "Každé měření uloží snímek do vlastní podsložky. Rozbor se pak "
+            "dá kdykoli zopakovat s jiným prahem, aniž by se muselo měřit "
+            "znovu. Snímky zabírají místo na disku – kolik, ukazuje řádek "
+            "pod tím.")
+        card.add(self.chk_store)
+        self.lbl_store = label("", "meta")
+        self.lbl_store.setWordWrap(True)
+        card.add(self.lbl_store)
 
         self.btn_measure = button("Spustit měření", "primary")
         self.btn_measure.setCheckable(True)
@@ -280,6 +320,12 @@ class DarkFieldPanel(QWidget):
         btn_csv = button("CSV…", "secondary")
         btn_csv.clicked.connect(self.exportCsv)
         card.add(row((self.btn_table, 3), (btn_csv, 2)))
+        btn_again = button("Zpětný rozbor…", "secondary")
+        btn_again.setToolTip(
+            "Projde uložené snímky znovu s právě nastaveným prahem a "
+            "sestaví z nich novou tabulku.")
+        btn_again.clicked.connect(self.reanalyzeRequested)
+        card.add(btn_again)
         lay.addWidget(card)
 
         # --- aktuální hodnoty
@@ -341,7 +387,21 @@ class DarkFieldPanel(QWidget):
             min_area_px=self.spin_minarea.value(),
             bias_frames=self.spin_bias_frames.value(),
             um_per_px=getattr(self, "_um_per_px", 0.0),
+            store_frames=self.chk_store.isChecked(),
             roi=roi if self.chk_roi.isChecked() else None)
+
+    def wantsStoredFrames(self) -> bool:
+        return self.chk_store.isChecked()
+
+    def setStoreInfo(self, store) -> None:
+        """Řádek o tom, kam se snímky ukládají a kolik už zabírají."""
+        if store is None:
+            self.lbl_store.setText("")
+            return
+        size = store.bytes_used() / (1024.0 * 1024.0)
+        self.lbl_store.setText("{} · {} snímků · {:.1f} MB"
+                               .format(os.path.basename(store.directory),
+                                       store.count, size))
 
     def wantsRoi(self) -> bool:
         return self.chk_roi.isChecked()
@@ -383,11 +443,18 @@ class DarkFieldPanel(QWidget):
                                 f"Referenci se nepodařilo uložit:\n{exc}")
 
     # -------------------------------------------------------------- data ---
-    def addSample(self, metrics: Dict[str, float]) -> None:
-        self.series.add(metrics)
+    def addSample(self, metrics: Dict[str, float], when=None) -> None:
+        self.series.add(metrics, when)
         self._updateState()
         if self.window_ is not None and self.window_.isVisible():
             self.window_.appendSample()
+
+    def setSeries(self, series: df.Series) -> None:
+        """Nahradí řadu (po zpětném rozboru)."""
+        self.series = series
+        self._updateState()
+        if self.window_ is not None:
+            self.window_.refresh()
 
     def clearSeries(self) -> None:
         self.series.clear()

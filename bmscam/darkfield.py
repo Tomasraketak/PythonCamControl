@@ -59,6 +59,7 @@ class Settings:
         self.bias_frames: int = 16          # kolik snímků průměrovat do biasu
         self.um_per_px: float = 0.0         # 0 = nekalibrováno
         self.roi: Optional[Tuple[int, int, int, int]] = None   # x, y, w, h
+        self.store_frames: bool = True      # ukládat snímky pro zpětný rozbor
         for key, value in kwargs.items():
             if not hasattr(self, key):
                 raise KeyError(key)
@@ -173,18 +174,30 @@ class Sample:
 
 # ------------------------------------------------------------------ rozbor --
 
-def to_gray(frame, pixel_order: str = "rgb") -> np.ndarray:
-    """Z snímku backendu (RGB888) udělá šedotónové pole.
+def to_gray_u8(frame, pixel_order: str = "rgb") -> np.ndarray:
+    """Z snímku backendu (RGB888) udělá šedotónové pole v uint8.
 
     Kamera je černobílá, takže R = G = B a stačí jeden kanál; u barevného
-    zdroje se použije průměr, aby se nic neztratilo."""
-    raw = np.frombuffer(bytes(frame.data), dtype=np.uint8)
+    zdroje se použije průměr, aby se nic neztratilo.
+
+    Vrací uint8, a to schválně: na 4K snímku je to 8 MB místo 33 MB ve
+    float32. Tahle funkce běží ve vlákně GUI (data snímku platí jen do
+    dalšího snímku), takže musí být co nejlevnější – přepočet na float
+    si udělá až rozbor ve vlastním vlákně."""
+    # Bez bytes(): kopie celé vyrovnávací paměti navíc je na 4K 24 MB.
+    # Čte se hned po pull() ve stejném vlákně, takže data drží.
+    raw = np.frombuffer(frame.data, dtype=np.uint8)
     raw = raw[: frame.stride * frame.height].reshape(frame.height, frame.stride)
     pixels = raw[:, : frame.width * 3].reshape(frame.height, frame.width, 3)
     first, third = pixels[:, :, 0], pixels[:, :, 2]
     if np.array_equal(first[::32, ::32], third[::32, ::32]):
-        return first.astype(np.float32)        # černobílý obraz
-    return pixels.mean(axis=2, dtype=np.float32)
+        return np.ascontiguousarray(first)     # černobílý obraz
+    return pixels.mean(axis=2).astype(np.uint8)
+
+
+def to_gray(frame, pixel_order: str = "rgb") -> np.ndarray:
+    """Totéž jako :func:`to_gray_u8`, ale ve float32 pro přímý rozbor."""
+    return to_gray_u8(frame, pixel_order).astype(np.float32)
 
 
 def crop(gray: np.ndarray, roi: Optional[Tuple[int, int, int, int]]) -> np.ndarray:
@@ -211,6 +224,29 @@ def _label_particles(mask: np.ndarray, min_area_px: int) -> Tuple[int, int]:
     return int(keep.sum()), int(areas[keep].sum())
 
 
+#: nad tolik pixelů se pozadí odhaduje ze vzorku, ne z celého snímku
+_STATS_SAMPLE_LIMIT = 400_000
+
+
+def background_stats(diff: np.ndarray) -> Tuple[float, float]:
+    """Vrátí (úroveň pozadí, šum) – robustně, přes medián a MAD.
+
+    Medián a MAD se počítají z rovnoměrného vzorku pixelů, ne z celého
+    snímku. Na 4K je to rozdíl mezi stovkami milisekund a jednotkami
+    milisekund a na výsledku se to neprojeví: obojí je odhad statistiky
+    pozadí, které zabírá drtivou většinu plochy, takže pár set tisíc
+    vzorků dá stejné číslo jako osm milionů. Prahuje se pak celý snímek,
+    takže žádná částice se neztratí."""
+    sample = diff
+    if diff.size > _STATS_SAMPLE_LIMIT:
+        step = int(np.ceil(np.sqrt(diff.size / _STATS_SAMPLE_LIMIT)))
+        sample = diff[::step, ::step]
+    median = float(np.median(sample))
+    mad = float(np.median(np.abs(sample - median)))
+    sigma = mad * 1.4826 or float(sample.std()) or 1.0
+    return median, sigma
+
+
 def analyze(gray: np.ndarray, bias: Optional[Bias],
             settings: Settings) -> Dict[str, float]:
     """Porovná snímek s referencí a spočítá metriky kontaminace."""
@@ -227,11 +263,7 @@ def analyze(gray: np.ndarray, bias: Optional[Bias],
         # bez reference se za pozadí bere medián snímku
         diff = gray - float(np.median(gray))
 
-    # šum pozadí: robustní odhad z odchylky od mediánu (MAD),
-    # aby ho samotné částice nenafoukly
-    median = float(np.median(diff))
-    mad = float(np.median(np.abs(diff - median)))
-    sigma = mad * 1.4826 or float(diff.std()) or 1.0
+    median, sigma = background_stats(diff)
 
     if settings.threshold_mode == THRESHOLD_ABSOLUTE:
         threshold = float(settings.absolute)
@@ -322,3 +354,117 @@ class Series:
 def default_csv_name(folder: str) -> str:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return os.path.join(folder, f"kontaminace_{stamp}.csv")
+
+
+# ------------------------------------------------------------------ archiv --
+
+class FrameStore:
+    """Složka se snímky měření, aby šel rozbor zopakovat zpětně.
+
+    Ukládá se šedotónový snímek v uint8 – tedy přesně to, z čeho rozbor
+    počítá, bez ztráty. Když je po ruce OpenCV, jde do PNG (v temném poli
+    je snímek skoro celý černý a komprese ho srazí na zlomek); jinak do
+    komprimovaného .npy. Díky tomu se dá po měření změnit práh nebo
+    minimální velikost částice a spočítat všechno znovu, aniž by se
+    muselo měřit od začátku.
+    """
+
+    PREFIX = "df_"
+
+    def __init__(self, directory: str):
+        self.directory = directory
+        self.count = 0
+
+    @staticmethod
+    def _cv2():
+        try:
+            import cv2
+        except ImportError:
+            return None
+        return cv2
+
+    def save(self, gray: np.ndarray, when: Optional[datetime] = None) -> str:
+        """Uloží snímek a vrátí cestu k němu."""
+        when = when or datetime.now()
+        os.makedirs(self.directory, exist_ok=True)
+        data = np.asarray(gray)
+        if data.dtype != np.uint8:
+            data = np.clip(data, 0, 255).astype(np.uint8)
+        stamp = when.strftime("%Y%m%d_%H%M%S_%f")[:-3]
+        base = os.path.join(self.directory,
+                            f"{self.PREFIX}{self.count + 1:05d}_{stamp}")
+        cv2 = self._cv2()
+        if cv2 is not None:
+            path = base + ".png"
+            if not cv2.imwrite(path, data):
+                raise OSError(f"Snímek se nepodařilo zapsat: {path}")
+        else:
+            path = base + ".npz"
+            np.savez_compressed(path, gray=data)
+        self.count += 1
+        return path
+
+    def bytes_used(self) -> int:
+        return sum(os.path.getsize(p) for p in self.frames())
+
+    def frames(self) -> List[str]:
+        return self.list_frames(self.directory)
+
+    # ------------------------------------------------------------ čtení ---
+    @classmethod
+    def list_frames(cls, directory: str) -> List[str]:
+        """Snímky ve složce, seřazené podle názvu (a tím i podle času)."""
+        try:
+            names = os.listdir(directory)
+        except OSError:
+            return []
+        keep = [n for n in sorted(names)
+                if n.startswith(cls.PREFIX) and n.endswith((".png", ".npz"))]
+        return [os.path.join(directory, n) for n in keep]
+
+    @staticmethod
+    def load_frame(path: str) -> np.ndarray:
+        if path.endswith(".npz"):
+            with np.load(path, allow_pickle=False) as data:
+                return np.asarray(data["gray"])
+        cv2 = FrameStore._cv2()
+        if cv2 is None:
+            raise ValueError(
+                "Snímky ve formátu PNG umí načíst jen OpenCV "
+                "(pip install opencv-python).")
+        image = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+        if image is None:
+            raise ValueError(f"Snímek se nepodařilo načíst: {path}")
+        return image
+
+    @staticmethod
+    def frame_time(path: str) -> Optional[datetime]:
+        """Čas z názvu souboru – df_00007_20260907_143012_250.png."""
+        stem = os.path.splitext(os.path.basename(path))[0]
+        parts = stem.split("_")
+        if len(parts) < 4:
+            return None
+        try:
+            return datetime.strptime("_".join(parts[-3:]), "%Y%m%d_%H%M%S_%f")
+        except ValueError:
+            try:
+                return datetime.strptime("_".join(parts[-3:-1]), "%Y%m%d_%H%M%S")
+            except ValueError:
+                return None
+
+
+def reanalyze(paths: Sequence[str], bias: Optional[Bias], settings: Settings,
+              progress=None) -> "Series":
+    """Projde uložené snímky znovu a sestaví z nich novou řadu měření.
+
+    `progress(hotovo, celkem)` smí vrátit False a rozbor tím zastavit –
+    okno tak může nabídnout tlačítko Zrušit."""
+    series = Series()
+    total = len(paths)
+    for done, path in enumerate(paths, 1):
+        gray = FrameStore.load_frame(path)
+        metrics = analyze(crop(gray, settings.roi), bias, settings)
+        series.add(metrics, FrameStore.frame_time(path))
+        if progress is not None and progress(done, total) is False:
+            break
+    return series

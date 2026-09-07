@@ -4,6 +4,7 @@ Ovládací program s grafickým rozhraním pro mikroskopovou kameru
 **BMS Microscopes RJ45 8MP 4K UHD Multioutput HDMI**, postavený nad
 originálním SDK `uvcham` (verze 1.29030.20250722).
 
+**Jak s programem pracovat, krok za krokem: [docs/navod.md](docs/navod.md).**
 Podrobný soupis ovládacích prvků a jejich konstant v SDK je v [docs/prehled.md](docs/prehled.md).
 
 Rozhraní vychází z návrhového systému **Modernist** – ostré tvary bez zaoblení,
@@ -39,7 +40,10 @@ Zdrojový návrh je v [docs/design](docs/design/).
   uložitelný do souboru), pravidelné měření v nastavitelném intervalu,
   práh podle šumu (σ) nebo pevný, filtr nejmenší částice, volitelně jen
   ve vybraném výřezu. Výsledky se zapisují do tabulky s grafem průběhu
-  a dají se uložit do CSV. Podrobně v [docs/darkfield.md](docs/darkfield.md).
+  a dají se uložit do CSV. Rozbor běží ve vlastním vlákně, takže okno
+  zůstane ovladatelné, a s každým měřením se ukládá i snímek – celou řadu
+  jde kdykoli **spočítat znovu** s jiným prahem (*Zpětný rozbor…*), aniž by
+  se muselo měřit od začátku. Podrobně v [docs/darkfield.md](docs/darkfield.md).
 * **Měřicí překryvy** – mřížka třetin, nitkový kříž a kalibrovatelné měřítko
   v mikrometrech (*Zobrazení → Kalibrace měřítka*).
 * **Přesné hodnoty** – u každé veličiny je vedle posuvníku i vstupní pole.
@@ -275,8 +279,10 @@ bmscam/
         video_view.py         plocha s obrazem, zoom, překryvy, výběr ROI
         led_panel.py          panel osvětlení (Arduino)
         darkfield_panel.py    záložka Dark Field – tabulka a graf kontaminace
+        darkfield_worker.py   rozbor temného pole ve vlastním vlákně
 arduino/bms_led_controller/   sketch pro Arduino Mega (FastLED)
 tests/test_smoke.py           testy bez hardwaru
+docs/navod.md                 návod k obsluze krok za krokem
 docs/zapojeni_led.md          zapojení osvětlení a popis protokolu
 docs/darkfield.md             postup měření kontaminace v temném poli
 docs/design/                  zdrojový návrh rozhraní a jeho design system
@@ -297,5 +303,8 @@ Testy běží bez kamery i bez displeje (Qt v režimu `offscreen`).
   aplikace, takže nemůže dojít k záměně snímků.
 * Rozlišení a kodek jde podle SDK měnit jen při zastaveném streamu; aplikace
   proto stream sama zastaví, přepne a znovu spustí.
+* Ve vlákně GUI se nedělá nic těžkého: rozbor temného pole má vlastní vlákno
+  a simulovaná kamera si obraz kreslí ve svém. Do obsluhy snímku patří jen
+  to, co musí proběhnout, dokud data snímku platí.
 * Binární knihovny SDK (`uvcham.dll`, `libtoupcam.so`) jsou majetkem výrobce
   kamery a jsou zde přiloženy pro pohodlí; řiďte se jejich licencí.

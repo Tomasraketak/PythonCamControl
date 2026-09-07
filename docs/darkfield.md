@@ -18,9 +18,46 @@ tmavé a všechno, co na něm ulpí, rozptyluje světlo a svítí.
    Referenci jde uložit (`.npz`) a příště načíst – ale jen když se od té
    doby nezměnila expozice, zisk, osvětlení ani rozlišení.
 3. **Nastavte práh.** Viz níže.
-4. **Spusťte měření.** V zadaném intervalu se vyhodnotí snímek a přibude
-   řádek do tabulky. **Tabulka a graf…** otevře okno s průběhem,
-   **CSV…** ho uloží.
+4. **Spusťte měření.** V zadaném intervalu (výchozích 10 s) se vyhodnotí
+   snímek a přibude řádek do tabulky. **Tabulka a graf…** otevře okno
+   s průběhem, **CSV…** ho uloží.
+
+## Zpětný rozbor
+
+Práh se dobře nastavuje až tehdy, když víte, jak data vypadají – jenže to
+je obvykle po měření, ne před ním. Proto se s každým měřením ukládá i
+samotný snímek, ze kterého se počítalo.
+
+Zaškrtávátko **Ukládat snímky pro zpětný rozbor** (výchozí stav) založí
+pro každý běh podsložku `darkfield_RRRRMMDD_HHMMSS` v pracovní složce.
+Tlačítko **Zpětný rozbor…** pak celou řadu spočítá znovu podle právě
+nastaveného prahu, minimální velikosti částice a výřezu. Původní tabulka
+se nahradí, takže si ji předtím případně uložte do CSV.
+
+Ukládá se šedotónový snímek v uint8 – přesně to, z čeho rozbor počítá,
+takže zpětný rozbor dá se stejným nastavením bit po bitu stejná čísla
+jako živé měření. Když je po ruce OpenCV, jde snímek do PNG; v temném
+poli je skoro celý černý, takže se komprimuje na zlomek. Řádek pod
+zaškrtávátkem průběžně ukazuje, kolik už archiv zabírá – když místo
+na disku není, ukládání vypněte, měření samo poběží dál.
+
+Zpětný rozbor umí načíst i složku ze starších běhů, ne jen z toho
+posledního.
+
+## Výkon
+
+Rozbor 4K snímku trvá kolem desetiny sekundy. Aby kvůli němu neztuhlo
+okno, běží ve vlastním vlákně – v obsluze snímku se dělá jen šedotónová
+kopie, dokud jsou data platná. Fronta má hloubku jedna: když rozbor
+nestíhá zadaný interval, snímek se **zahodí** místo aby se hromadil,
+a po zastavení měření to program napíše do stavového řádku. Když se to
+stává, prodlužte interval.
+
+Úroveň pozadí a šum se počítají z rovnoměrného vzorku pixelů, ne z celého
+snímku. Na 4K je to rozdíl mezi stovkami milisekund a jednotkami
+milisekund, a na výsledku se to neprojeví: obojí je odhad statistiky
+pozadí, které zabírá drtivou většinu plochy. **Prahuje se pak celý
+snímek**, takže se žádná částice neztratí.
 
 ## Práh
 

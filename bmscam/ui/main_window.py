@@ -10,12 +10,12 @@ from typing import Dict, List, Optional
 
 from PyQt5.QtCore import QSettings, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QImage, QKeySequence
-from PyQt5.QtWidgets import (QAction, QComboBox, QDialog, QDialogButtonBox,
-                             QDoubleSpinBox, QFileDialog, QFormLayout,
-                             QHBoxLayout, QLabel, QMainWindow, QMenu,
-                             QMessageBox, QPlainTextEdit, QScrollArea,
-                             QSizePolicy, QSpinBox, QStackedWidget, QVBoxLayout,
-                             QWidget)
+from PyQt5.QtWidgets import (QAction, QApplication, QComboBox, QDialog,
+                             QDialogButtonBox, QDoubleSpinBox, QFileDialog,
+                             QFormLayout, QHBoxLayout, QLabel, QMainWindow,
+                             QMenu, QMessageBox, QPlainTextEdit,
+                             QProgressDialog, QScrollArea, QSizePolicy,
+                             QSpinBox, QStackedWidget, QVBoxLayout, QWidget)
 
 from ..backends import (EVENT_DISCONNECT, EVENT_ERROR, EVENT_IMAGE,
                         CameraBackend, CameraError, diagnostics,
@@ -26,6 +26,7 @@ from ..spec import (GROUP_ORDER, GROUP_TITLES, GROUP_TOOLTIPS, KIND_ACTION,
 from . import theme
 from .controls import PropertyPanel
 from .darkfield_panel import DarkFieldPanel
+from .darkfield_worker import DarkFieldRunner
 from .led_panel import LedPanel
 from .video_view import VideoView
 from .widgets import (Card, SegmentedControl, SidePanel, Tag, button, hline,
@@ -63,8 +64,9 @@ class MainWindow(QMainWindow):
         self._record_path: Optional[str] = None
         self._timelapse_count = 0
         self._timelapse_dir: Optional[str] = None
-        self._bias_collector = None       # sběr referenčních snímků
         self._df_pending = False          # čeká se na snímek k rozboru
+        self._df_store = None             # složka se snímky pro zpětný rozbor
+        self._df_last_bias_frame = 0.0    # kdy naposled šel snímek do reference
 
         self.save_dir = self.settings.value(
             "save_dir", os.path.join(os.path.expanduser("~"), "BMSCam"))
@@ -82,6 +84,12 @@ class MainWindow(QMainWindow):
 
         self.df_timer = QTimer(self)
         self.df_timer.timeout.connect(self._requestSample)
+
+        self.df_runner = DarkFieldRunner(self)
+        self.df_runner.sampleReady.connect(self._onDarkFieldSample)
+        self.df_runner.biasProgress.connect(self.df_panel.setBiasProgress)
+        self.df_runner.biasReady.connect(self._onBiasReady)
+        self.df_runner.failed.connect(self._onDarkFieldFailed)
 
         self.view.um_per_px = float(self.settings.value("um_per_px", 1.0))
         self.df_panel.setSaveDir(self.save_dir)
@@ -327,6 +335,7 @@ class MainWindow(QMainWindow):
         self.df_panel.biasRequested.connect(self.startBiasCapture)
         self.df_panel.measureToggled.connect(self._onDarkFieldToggled)
         self.df_panel.sampleRequested.connect(lambda: self._requestSample(True))
+        self.df_panel.reanalyzeRequested.connect(self.reanalyzeDarkField)
         self.df_scroll = QScrollArea()
         self.df_scroll.setWidgetResizable(True)
         self.df_scroll.setFrameShape(QScrollArea.NoFrame)
@@ -457,7 +466,7 @@ class MainWindow(QMainWindow):
         if self.isRecording():
             self.stopRecording(verify=False)
         self.df_panel.stopMeasuring()
-        self._bias_collector = None
+        self.df_runner.cancelBias()
         self._df_pending = False
         if self.camera is not None:
             try:
@@ -609,7 +618,7 @@ class MainWindow(QMainWindow):
             return
         self._frames += 1
         self._frames_total += 1
-        if self._bias_collector is not None or self._df_pending:
+        if self._df_pending or self.df_runner.collecting_bias:
             self._darkFieldFrame(frame)
         now = time.time()
         if now - self._last_paint < 0.03:      # náhled max ~33 fps
@@ -647,9 +656,23 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, APP_NAME,
                                     "Nejdřív připojte kameru a spusťte obraz.")
             return
-        self._bias_collector = darkfield.BiasCollector(frames)
-        self.df_panel.setBiasProgress(0, frames)
+        self._df_last_bias_frame = 0.0
+        self.df_runner.startBias(frames)
         self.statusMessage("Snímám referenci čistého sklíčka…", 4000)
+
+    def _onBiasReady(self, bias) -> None:
+        self.df_panel.setBias(bias)
+        self.statusMessage("Reference pořízena", 4000)
+
+    def _onDarkFieldSample(self, metrics, when) -> None:
+        self.df_panel.addSample(metrics, when)
+        if self._df_store is not None:
+            self.df_panel.setStoreInfo(self._df_store)
+
+    def _onDarkFieldFailed(self, message: str) -> None:
+        self._df_pending = False
+        self.df_panel.stopMeasuring()
+        QMessageBox.warning(self, APP_NAME, f"Rozbor obrazu selhal:\n{message}")
 
     def _onDarkFieldToggled(self, on: bool, interval: float) -> None:
         if on:
@@ -658,13 +681,39 @@ class MainWindow(QMainWindow):
                                         "Nejdřív připojte kameru a spusťte obraz.")
                 self.df_panel.stopMeasuring()
                 return
+            self._df_store = None
+            if self.df_panel.wantsStoredFrames():
+                try:
+                    self._df_store = darkfield.FrameStore(self._makeDarkFieldDir())
+                except OSError as exc:
+                    QMessageBox.warning(self, APP_NAME,
+                                        f"Složku pro snímky nejde založit:\n{exc}")
+                    self.df_panel.stopMeasuring()
+                    return
+            self.df_panel.setStoreInfo(self._df_store)
+            self.df_runner.dropped = 0
             self.df_timer.start(max(200, int(interval * 1000)))
             self._requestSample()          # první měření hned, ne až za interval
             self.statusMessage(f"Měření kontaminace běží po {interval:g} s", 4000)
         else:
             self.df_timer.stop()
             self._df_pending = False
-            self.statusMessage("Měření kontaminace zastaveno", 3000)
+            if self.df_runner.dropped:
+                self.statusMessage(
+                    "Měření zastaveno – {} snímků se nestihlo zpracovat, "
+                    "zkuste delší interval".format(self.df_runner.dropped), 8000)
+            else:
+                self.statusMessage("Měření kontaminace zastaveno", 3000)
+
+    def _makeDarkFieldDir(self) -> str:
+        """Každé měření dostane vlastní podsložku – stejně jako časosběr."""
+        base = os.path.join(self._ensureDir(), f"darkfield_{self._stamp()}")
+        folder, index = base, 2
+        while os.path.exists(folder):
+            folder = f"{base}_{index}"
+            index += 1
+        os.makedirs(folder)
+        return folder
 
     def _requestSample(self, announce: bool = False) -> None:
         """Označí, že se má vyhodnotit nejbližší příchozí snímek."""
@@ -676,45 +725,93 @@ class MainWindow(QMainWindow):
         self._df_pending = True
 
     def _darkFieldFrame(self, frame) -> None:
-        """Zpracuje snímek: buď do reference, nebo jako měření.
+        """Předá snímek k rozboru do vlákna.
 
-        Běží uvnitř zpracování snímku, kdy jsou data čerstvá a nikdo je
-        zatím nepřepsal."""
+        Tady, ve vlákně GUI, se udělá jen šedotónová kopie – data snímku
+        platí jen do příchodu dalšího, takže je nejde vlákna nechat číst
+        přímo. Všechno ostatní (medián, prahování, zápis na disk) běží
+        až tam."""
+        if self.df_runner.busy:
+            return                          # ještě se počítá, tenhle vynecháme
+        collecting = self.df_runner.collecting_bias
+        if collecting:
+            # Reference se sbírá po dávkách, ne z každého snímku za sebou –
+            # jinak by okno na dobu snímání ztuhlo.
+            now = time.time()
+            if now - self._df_last_bias_frame < 0.1:
+                return
+            self._df_last_bias_frame = now
+        elif not self._df_pending:
+            return
+
         try:
-            gray = self._grayFrame(frame)
+            gray = darkfield.to_gray_u8(
+                frame, getattr(self.camera, "pixel_order", "rgb"))
         except Exception as exc:                       # noqa: BLE001
             self._df_pending = False
-            self._bias_collector = None
+            self.df_runner.cancelBias()
             self.statusMessage(f"Rozbor obrazu selhal: {exc}")
             return
 
-        collector = self._bias_collector
-        if collector is not None:
-            try:
-                done = collector.add(darkfield.crop(gray, self._darkFieldRoi()))
-            except ValueError as exc:
-                self._bias_collector = None
-                QMessageBox.warning(self, APP_NAME, str(exc))
-                return
-            self.df_panel.setBiasProgress(collector.taken, collector.count)
-            if done:
-                self._bias_collector = None
-                self.df_panel.setBias(collector.result())
-                self.statusMessage("Reference pořízena", 4000)
-            return
+        settings = self.df_panel.settings(self._darkFieldRoi())
+        # Do archivu jde vždycky celý snímek, ne jen výřez – zpětný rozbor
+        # si pak může vybrat jinou oblast.
+        store = None if collecting else self._df_store
+        if self.df_runner.submit(gray, self.df_panel.bias, settings,
+                                 datetime.now(), store):
+            if not collecting:
+                self._df_pending = False
 
-        if not self._df_pending:
+    def reanalyzeDarkField(self) -> None:
+        """Spočítá měření znovu ze snímků uložených na disku."""
+        start = (self._df_store.directory if self._df_store is not None
+                 else self._ensureDir())
+        folder = QFileDialog.getExistingDirectory(
+            self, "Složka se snímky měření", start)
+        if not folder:
             return
-        self._df_pending = False
+        paths = darkfield.FrameStore.list_frames(folder)
+        if not paths:
+            QMessageBox.information(
+                self, APP_NAME,
+                "V té složce nejsou žádné uložené snímky měření.\n\n"
+                "Ukládají se jen tehdy, když je při měření zapnuté "
+                "„Ukládat snímky pro zpětný rozbor“.")
+            return
+        if len(self.df_panel.series):
+            answer = QMessageBox.question(
+                self, APP_NAME,
+                "Současná tabulka ({} měření) se nahradí novým rozborem "
+                "{} snímků. Pokračovat?".format(len(self.df_panel.series),
+                                                len(paths)),
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if answer != QMessageBox.Yes:
+                return
+
+        dialog = QProgressDialog("Počítám znovu…", "Zrušit", 0, len(paths), self)
+        dialog.setWindowTitle(APP_NAME)
+        dialog.setWindowModality(Qt.WindowModal)
+        dialog.setMinimumDuration(0)
+
+        def progress(done: int, total: int) -> bool:
+            dialog.setValue(done)
+            dialog.setLabelText(f"Počítám znovu… {done}/{total}")
+            QApplication.processEvents()
+            return not dialog.wasCanceled()
+
         settings = self.df_panel.settings(self._darkFieldRoi())
         try:
-            metrics = darkfield.analyze(
-                darkfield.crop(gray, settings.roi), self.df_panel.bias, settings)
-        except ValueError as exc:
-            self.df_panel.stopMeasuring()
-            QMessageBox.warning(self, APP_NAME, str(exc))
+            series = darkfield.reanalyze(paths, self.df_panel.bias, settings,
+                                         progress)
+        except (ValueError, OSError) as exc:
+            dialog.close()
+            QMessageBox.warning(self, APP_NAME,
+                                f"Zpětný rozbor selhal:\n{exc}")
             return
-        self.df_panel.addSample(metrics)
+        dialog.close()
+        self.df_panel.setSeries(series)
+        self.statusMessage(f"Zpětně vyhodnoceno {len(series)} snímků", 6000)
+        self.df_panel.showTable()
 
     # ============================================================ vlastnosti =
     def _onPropChanged(self, key: str, value: int) -> None:
@@ -1248,6 +1345,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         self.timelapse_timer.stop()
         self.df_timer.stop()
+        self.df_runner.shutdown()
         self.ui_timer.stop()
         self.led_panel.shutdown()
         self.disconnectCamera()

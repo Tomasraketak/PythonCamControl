@@ -39,6 +39,8 @@ class DemoBackend(CameraBackend):
         self._stop_evt = threading.Event()
         self._callback = None
         self._buf = None
+        self._front = None                 # hotový snímek pro pull()
+        self._lock = threading.Lock()
         self._w = self._h = self._stride = 0
         self._t0 = time.time()
         self._cells = [(random.random(), random.random(), random.uniform(0.02, 0.06),
@@ -146,7 +148,10 @@ class DemoBackend(CameraBackend):
         self._callback = callback
         self._w, self._h = _RESOLUTIONS[self._res_index]
         self._stride = _dibstride(self._w)
+        # Dvě vyrovnávací paměti: do jedné se kreslí, druhou si mezitím
+        # čte aplikace. Skutečná kamera se chová stejně.
         self._buf = bytearray(self._stride * self._h)
+        self._front = bytearray(self._stride * self._h)
         self._stop_evt.clear()
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -156,6 +161,12 @@ class DemoBackend(CameraBackend):
         while not self._stop_evt.wait(1 / 15.0):
             if self._values.get("pause"):
                 continue
+            # Kreslí se tady, ve vlákně kamery. Dokud to bylo v pull(),
+            # platila aplikace za každý snímek ~100 ms ve vlákně GUI
+            # a okno kvůli tomu sekalo.
+            self._render()
+            with self._lock:
+                self._buf, self._front = self._front, self._buf
             if self._callback:
                 self._callback(EVENT_IMAGE)
 
@@ -170,10 +181,10 @@ class DemoBackend(CameraBackend):
         return self._running
 
     def pull(self) -> Optional[Frame]:
-        if not self._running or self._buf is None:
+        if not self._running or self._front is None:
             return None
-        self._render()
-        return Frame(self._buf, self._w, self._h, self._stride)
+        with self._lock:
+            return Frame(self._front, self._w, self._h, self._stride)
 
     # -------------------------------------------------------------- kreslení -
     def _gain_factor(self) -> float:
@@ -246,10 +257,11 @@ class DemoBackend(CameraBackend):
             big = big[:, ::-1]
         if self._values["flipvert"]:
             big = big[::-1]
-        out = _np.frombuffer(memoryview(self._buf), dtype=_np.uint8).reshape(h, self._stride)
-        out = out.copy()
+        # Zapisujeme rovnou do vyrovnávací paměti. Přes mezikopii a
+        # tobytes() to znamenalo tři kopie celého snímku na každý pull –
+        # na 4K skoro sto milisekund, což sekalo celé GUI v demo režimu.
+        out = _np.asarray(memoryview(self._buf)).reshape(h, self._stride)
         out[:, : w * 3] = big.reshape(h, w * 3)
-        self._buf[:] = out.tobytes()
 
     def _render_fallback(self) -> None:
         """Bez numpy jen jednoduchý gradient, ať aplikace přesto běží."""
