@@ -131,6 +131,12 @@ která strana se ovládá.
 * **Vše** ovládá všechny čtyři najednou.
 * **Šikmé osvětlení** (*shora / zprava / zdola / zleva*) rozsvítí jednu
   stranu – tím vynikne reliéf vzorku. Pro temné pole je tohle základ.
+* **Jediný kanál** – tři tlačítka *625 / 520 / 470 nm* rozsvítí všechny
+  strany jen červenou, zelenou nebo modrou složkou. Vlnová délka je
+  vypsaná přímo na tlačítku, přesný rozsah v bublině. Hodí se, když vzorek
+  kontrastuje líp v části spektra, a v temném poli, kde na vlnové délce
+  závisí rozptyl na částicích. Než začnete měřit kontaminaci, kanál
+  vyberte a už s ním nehýbejte – změna barvy znehodnotí referenci.
 
 Zapojení, seznam součástek a protokol jsou v [zapojeni_led.md](zapojeni_led.md).
 

@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QFrame,
                              QSpinBox, QVBoxLayout, QWidget)
 
 from ..leds import (BAUD, LEDS_PER_PANEL, PANEL_NAMES, PANEL_SHORT, PANELS,
-                    PRESETS, LedProtocol, LedState, color_to_hex)
+                    CHANNELS, PRESETS, LedProtocol, LedState, color_to_hex)
 from ..serialio import (SerialLink, available, guess_arduino_port,
                         list_serial_ports, unavailable_reason)
 from . import theme
@@ -274,6 +274,22 @@ class LedPanel(QWidget):
         self.btn_master_color = button("Vlastní…", "secondary")
         self.btn_master_color.clicked.connect(self._pickMasterColor)
         lay.addLayout(row((self.cmb_preset, 1), self.btn_master_color))
+
+        lay.addWidget(label("Jediný kanál", "field"))
+        channels = QHBoxLayout()
+        channels.setContentsMargins(0, 0, 0, 0)
+        channels.setSpacing(4)
+        self.channel_buttons = {}
+        for key, name, rgb, typical, span in CHANNELS:
+            btn = button(f"{typical} nm")
+            btn.setStyleSheet(_swatch_style(rgb))
+            btn.setToolTip(
+                f"{name} kanál – rozsvítí všechny čtyři strany jen touto "
+                f"složkou.\nVlnová délka {span}, typicky kolem {typical} nm.")
+            btn.clicked.connect(lambda _=False, c=rgb: self._setAllColor(c))
+            channels.addWidget(btn, 1)
+            self.channel_buttons[key] = btn
+        lay.addLayout(channels)
 
         lay.addWidget(label("Šikmé osvětlení", "field"))
         self.seg_direction = SegmentedControl(["H", "P", "D", "L", "◎"],

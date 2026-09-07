@@ -18,6 +18,28 @@ PANEL_SHORT = ("shora", "zprava", "zdola", "zleva")
 
 RGB = Tuple[int, int, int]
 
+#: Jednotlivé kanály WS2812 a jejich vlnová délka.
+#: Čip má tři samostatné čipy LED, každý s vlastním úzkým pásmem – když
+#: se rozsvítí jen jeden, chová se osvětlení jako (široké) pásmové
+#: filtrování. To se hodí u vzorků, které v některé části spektra
+#: kontrastují líp, a u temného pole, kde na vlnové délce závisí rozptyl.
+#: Údaje jsou z katalogových listů běžných WS2812B; kus od kusu se liší.
+CHANNELS: List[Tuple[str, str, RGB, int, str]] = [
+    # klíč,   popis,      barva,           typicky, rozsah
+    ("red",   "Červená",  (255, 0, 0),     625,     "620–630 nm"),
+    ("green", "Zelená",   (0, 255, 0),     520,     "515–530 nm"),
+    ("blue",  "Modrá",    (0, 0, 255),     470,     "465–475 nm"),
+]
+
+
+def channel(key: str) -> Tuple[str, str, RGB, int, str]:
+    """Kanál podle klíče („red“ / „green“ / „blue“)."""
+    for item in CHANNELS:
+        if item[0] == key:
+            return item
+    raise KeyError(key)
+
+
 #: přednastavené barvy nabízené v aplikaci
 PRESETS: List[Tuple[str, RGB]] = [
     ("Bílá", (255, 255, 255)),

@@ -153,6 +153,19 @@ hned vidět, která strana se ovládá. Kromě jasu a barvy každé strany zvlá
 jsou k dispozici tlačítka pro šikmé osvětlení (*shora / zprava / zdola /
 zleva*), které zvýrazní reliéf vzorku.
 
+Řádek **Jediný kanál** rozsvítí všechny čtyři strany jen jednou složkou RGB.
+Každý čip WS2812 má tři samostatné LED s úzkým pásmem, takže se osvětlení
+chová jako (široké) pásmové filtrování – u vzorků, které v některé části
+spektra kontrastují líp, i v temném poli, kde na vlnové délce závisí rozptyl.
+
+| Kanál | Typicky | Rozsah |
+|---|---|---|
+| Červená | 625 nm | 620–630 nm |
+| Zelená | 520 nm | 515–530 nm |
+| Modrá | 470 nm | 465–475 nm |
+
+Údaje jsou z katalogových listů běžných WS2812B; kus od kusu se liší.
+
 > **Napájení:** 32 LED odebírá při plné bílé až 1,9 A – moduly potřebují
 > samostatný zdroj 5 V / 3 A a společnou zem s Arduinem. Nikdy je nenapájejte
 > z pinu 5V na desce. Kompletní schéma zapojení, seznam součástek a popis

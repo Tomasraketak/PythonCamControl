@@ -1108,6 +1108,39 @@ def test_darkfield_frame_store_handles_accented_path():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_led_panel_has_single_channel_buttons():
+    """Rychlá volba jednoho kanálu pošle čistou barvu a hlásí vlnovou délku."""
+    from bmscam.leds import CHANNELS, LedProtocol, channel
+    from bmscam.ui.led_panel import LedPanel
+
+    _app()
+    panel = LedPanel()
+    try:
+        sent = []
+        panel._send = sent.append          # bez připojeného Arduina
+
+        assert set(panel.channel_buttons) == {"red", "green", "blue"}
+        for key, name, rgb, typical, span in CHANNELS:
+            btn = panel.channel_buttons[key]
+            assert btn.text() == f"{typical} nm", btn.text()
+            tip = btn.toolTip()
+            assert span in tip and name in tip, tip
+
+            sent.clear()
+            btn.click()
+            assert sent == [LedProtocol.all_color(rgb)], sent
+            # barva se propíše i do jednotlivých stran
+            assert all(w.color() == rgb for w in panel.panels)
+
+        # čísla odpovídají katalogu WS2812B
+        assert channel("red")[3] == 625
+        assert channel("green")[3] == 520
+        assert channel("blue")[3] == 470
+    finally:
+        panel.shutdown()
+        panel.deleteLater()
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):
