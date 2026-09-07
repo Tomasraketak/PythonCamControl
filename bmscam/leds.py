@@ -18,6 +18,30 @@ PANEL_SHORT = ("shora", "zprava", "zdola", "zleva")
 
 RGB = Tuple[int, int, int]
 
+#: O kolik stran je zřetězení modulů natočené proti popiskům v aplikaci.
+#: Modul, který sketch adresuje jako první, nemusí ležet nahoře – záleží,
+#: kde se datový vodič připojil. Při natočení 1 leží první modul vpravo,
+#: takže „Horní“ v aplikaci se musí poslat na modul 4.
+DEFAULT_ROTATION = 1
+
+
+def wire_index(gui_index: int, rotation: int = DEFAULT_ROTATION) -> int:
+    """Číslo modulu (1..4) pro stranu, kterou aplikace zobrazuje jako `gui_index`.
+
+    >>> wire_index(0, 1)      # „Horní“ při natočení o jednu stranu
+    4
+    >>> wire_index(1, 1)      # „Pravý“
+    1
+    >>> wire_index(0, 0)      # bez natočení adresuje aplikace přímo
+    1
+    """
+    return (gui_index - int(rotation)) % PANELS + 1
+
+
+def gui_index(wire: int, rotation: int = DEFAULT_ROTATION) -> int:
+    """Opak :func:`wire_index` – ze zprávy Arduina zpět na stranu v aplikaci."""
+    return (int(wire) - 1 + int(rotation)) % PANELS
+
 #: Jednotlivé kanály WS2812 a jejich vlnová délka.
 #: Čip má tři samostatné čipy LED, každý s vlastním úzkým pásmem – když
 #: se rozsvítí jen jeden, chová se osvětlení jako (široké) pásmové

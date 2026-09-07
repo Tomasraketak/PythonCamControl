@@ -45,9 +45,11 @@ nabídne simulovanou kameru, která se chová jako skutečná.
 
 ### Pracovní složka
 
-**☰ → Pracovní složka** určuje, kam padají snímky, videa a měření. Nastavte
-si ji hned na začátku – všechno ostatní z ní vychází a program si ji
-pamatuje i po vypnutí.
+**☰ → Složka pro ukládání…** určuje, kam padají snímky, videa a měření.
+Ve výchozím stavu je to `Downloads\BMS fotky` v domovské složce přihlášeného
+uživatele – na počítači, kde jste přihlášení jako *Programovani*, tedy
+`C:\Users\Programovani\Downloads\BMS fotky`. Program si vaši volbu pamatuje
+i po vypnutí.
 
 ---
 
@@ -85,11 +87,35 @@ mřížku třetin, nitkový kříž a měřítko.
 mikrometrem známou vzdálenost a zadejte poměr v **☰ → Kalibrace měřítka**.
 Bez toho nedostanete plochu v µm² ani v měření kontaminace.
 
-### Profily
+### Uložení celého nastavení
 
-Až budete s nastavením spokojení, uložte si ho: **Profil nastavení → Uložit**
-v horní části levého panelu. Profil je obyčejný JSON a dá se přenést na jiný
-počítač. Pro každý typ preparátu si můžete držet vlastní.
+Až budete s nastavením spokojení, uložte si ho: **Uložit vše…** v horní části
+levého panelu. Do jednoho souboru JSON jde všechno najednou:
+
+* kamera – expozice, barvy, obraz, ostření, rozlišení i kodek,
+* osvětlení – jas a barva každé strany, hlavní jas, natočení modulů,
+* Dark Field – interval, práh, minimální částice, ukládání snímků,
+* snímání – pracovní složka, interval časosběru, kalibrace měřítka.
+
+**Načíst…** to vrátí zpátky. Co v souboru chybí nebo čemu kamera nerozumí,
+se přeskočí a program napíše do stavového řádku, co se použilo a co ne –
+soubor z jiné verze tedy nezpůsobí nic horšího než neúplné obnovení.
+
+Soubory ve složce pro ukládání se nabízejí i v rozbalovací nabídce nad
+tlačítky. Vyplatí se uložit nastavení ke každé sadě měření: za měsíc už
+nikdo nedohledá, jaký byl práh a jak svítily LED.
+
+### Kontrola stálosti expozice
+
+**☰ → Kontrola stálosti expozice…** deset sekund sleduje hodnoty čtené
+z kamery a zároveň střední jas obrazu, a pak řekne jedno ze čtyř:
+
+* automatika je zapnutá – vypněte ji, než začnete měřit;
+* automatika je vypnutá, ale něco přesto mění expozici nebo zisk;
+* hodnoty drží, ale jas obrazu kolísá – to bývá osvětlení nebo okolní světlo;
+* všechno stálo.
+
+Před delším měřením kontaminace to stojí za deset sekund.
 
 ---
 

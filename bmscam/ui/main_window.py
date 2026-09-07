@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (QAction, QApplication, QComboBox, QDialog,
 from ..backends import (EVENT_DISCONNECT, EVENT_ERROR, EVENT_IMAGE,
                         CameraBackend, CameraError, diagnostics,
                         enumerate_devices, open_device)
-from .. import darkfield, videocheck
+from .. import darkfield, videocheck, workspace
 from ..spec import (GROUP_ORDER, GROUP_TITLES, GROUP_TOOLTIPS, KIND_ACTION,
                     KIND_READONLY, DeviceInfo, PropSpec)
 from . import theme
@@ -68,8 +68,8 @@ class MainWindow(QMainWindow):
         self._df_store = None             # složka se snímky pro zpětný rozbor
         self._df_last_bias_frame = 0.0    # kdy naposled šel snímek do reference
 
-        self.save_dir = self.settings.value(
-            "save_dir", os.path.join(os.path.expanduser("~"), "BMSCam"))
+        self.save_dir = self.settings.value("save_dir",
+                                            workspace.default_save_dir())
 
         self._buildActions()
         self._buildUi()
@@ -133,11 +133,12 @@ class MainWindow(QMainWindow):
         self.act_leds = act("Panel osvětlení", self._toggleLedPanel, "Ctrl+L", True)
         self.act_leds.setChecked(True)
         self.act_fullscreen = act("Celá obrazovka", self._onFullscreen, "F11", True)
-        self.act_profile_save = act("Uložit profil nastavení…", self.saveProfile)
-        self.act_profile_load = act("Načíst profil nastavení…", self.loadProfile)
+        self.act_profile_save = act("Uložit kompletní nastavení…", self.saveProfile)
+        self.act_profile_load = act("Načíst kompletní nastavení…", self.loadProfile)
         self.act_dir = act("Složka pro ukládání…", self.chooseSaveDir)
         self.act_diag = act("Diagnostika SDK…", self.showDiagnostics)
         self.act_checkvideo = act("Zkontrolovat nahrané video…", self.checkVideo)
+        self.act_checkexpo = act("Kontrola stálosti expozice…", self.checkExposure)
         self.act_shortcuts = act("Klávesové zkratky…", self.showShortcuts, "F1")
         self.act_about = act("O aplikaci…", self.showAbout)
         self.act_quit = act("Konec", self.close, "Ctrl+Q")
@@ -237,7 +238,7 @@ class MainWindow(QMainWindow):
                        self.act_leds, self.act_fullscreen):
             menu.addAction(action)
         menu.addSeparator()
-        for action in (self.act_diag, self.act_shortcuts, self.act_about,
+        for action in (self.act_checkexpo, self.act_diag, self.act_shortcuts, self.act_about,
                        self.act_quit):
             menu.addAction(action)
         return menu
@@ -291,12 +292,21 @@ class MainWindow(QMainWindow):
         profile_lay = QVBoxLayout(profile_box)
         profile_lay.setContentsMargins(0, 0, 0, 0)
         profile_lay.setSpacing(4)
-        profile_lay.addWidget(label("Profil nastavení", "field"))
+        profile_lay.addWidget(label("Kompletní nastavení", "field"))
         self.cmb_profile = QComboBox()
+        self.cmb_profile.setToolTip(
+            "Uložená nastavení ve složce pro ukládání. Výběrem se použije.")
         self.cmb_profile.activated.connect(self._onProfileSelected)
-        btn_profile_save = icon_button("save", "Uložit současné nastavení jako profil", size=32)
+        profile_lay.addWidget(self.cmb_profile)
+        btn_profile_save = button("Uložit vše…", "secondary", "save")
+        btn_profile_save.setToolTip(
+            "Uloží kameru, osvětlení, rozbor temného pole i nastavení "
+            "snímání do jednoho souboru JSON.")
         btn_profile_save.clicked.connect(self.saveProfile)
-        profile_lay.addLayout(row((self.cmb_profile, 1), btn_profile_save))
+        btn_profile_load = button("Načíst…", "secondary", "folder")
+        btn_profile_load.setToolTip("Načte nastavení ze souboru.")
+        btn_profile_load.clicked.connect(self.loadProfile)
+        profile_lay.addLayout(row((btn_profile_save, 1), (btn_profile_load, 1)))
         panel.add(profile_box)
 
         card = Card("Kamera")
@@ -1026,6 +1036,120 @@ class MainWindow(QMainWindow):
         box.setDetailedText("\n".join(report.lines()))
         box.exec_()
 
+    # ================================================= kontrola expozice ===
+    #: co se při kontrole sleduje – klíč vlastnosti a popisek
+    EXPO_WATCHED = (("aexpo", "automatika expozice"), ("expotime", "expoziční čas"),
+                    ("again", "zisk"), ("aexpotarget", "cílový jas AE"),
+                    ("light", "jas zdroje světla"))
+
+    def checkExposure(self, seconds: float = 10.0) -> Optional[str]:
+        """Ověří, jestli kameře nekolísá jas, když má být expozice ruční.
+
+        Hlavičkový soubor SDK zná jediný přepínač automatiky
+        (UVCHAM_AEXPO) a aplikace do něj sama nesahá. To ale neříká nic
+        o tom, co si dělá firmware kamery – a to jde zjistit jen měřením.
+        Proto se tady po zadanou dobu čtou hodnoty zpátky z kamery a
+        zároveň se sleduje střední jas obrazu."""
+        if self.camera is None or not self.camera.is_running():
+            QMessageBox.information(self, APP_NAME,
+                                    "Nejdřív připojte kameru a spusťte obraz.")
+            return None
+
+        watched = [(key, title) for key, title in self.EXPO_WATCHED
+                   if key in self.specs]
+        first, changes = {}, {}
+        levels = []
+
+        dialog = QProgressDialog("Sleduji expozici…", "Zrušit", 0, 100, self)
+        dialog.setWindowTitle(APP_NAME)
+        dialog.setWindowModality(Qt.WindowModal)
+        dialog.setMinimumDuration(0)
+        deadline = time.time() + max(2.0, float(seconds))
+        began = time.time()
+        try:
+            while time.time() < deadline and not dialog.wasCanceled():
+                for key, _ in watched:
+                    try:
+                        value = self.camera.get(key)
+                    except Exception:
+                        continue
+                    if key not in first:
+                        first[key] = value
+                    elif value != first[key]:
+                        changes.setdefault(key, set()).add(value)
+                frame = self.camera.pull()
+                if frame is not None:
+                    try:
+                        gray = darkfield.to_gray_u8(
+                            frame, getattr(self.camera, "pixel_order", "rgb"))
+                        levels.append(float(gray[::8, ::8].mean()))
+                    except Exception:
+                        pass
+                elapsed = time.time() - began
+                dialog.setValue(int(100 * elapsed / (deadline - began)))
+                QApplication.processEvents()
+                time.sleep(0.1)
+        finally:
+            dialog.close()
+
+        report = self._exposureReport(watched, first, changes, levels)
+        box = QMessageBox(self)
+        box.setWindowTitle(APP_NAME)
+        box.setIcon(QMessageBox.Information)
+        box.setText(report[0])
+        box.setInformativeText(report[1])
+        box.setDetailedText(report[2])
+        box.exec_()
+        return report[1]
+
+    @staticmethod
+    def _exposureReport(watched, first, changes, levels):
+        """Sestaví (nadpis, závěr, podrobnosti) z naměřených hodnot."""
+        lines = []
+        for key, title in watched:
+            if key not in first:
+                lines.append(f"{title}: kamera hodnotu nehlásí")
+            elif key in changes:
+                seen = ", ".join(str(v) for v in sorted(changes[key]))
+                lines.append(f"{title}: MĚNILA SE ({first[key]} → {seen})")
+            else:
+                lines.append(f"{title}: stálá na {first[key]}")
+
+        drift = 0.0
+        if levels:
+            drift = max(levels) - min(levels)
+            lines.append("")
+            lines.append("Střední jas obrazu: {} vzorků, {:.2f} až {:.2f} ADU, "
+                         "rozkmit {:.2f}".format(len(levels), min(levels),
+                                                 max(levels), drift))
+
+        auto_on = first.get("aexpo", 0)
+        moved = [title for key, title in watched if key in changes]
+        if auto_on:
+            head = "Automatika expozice je zapnutá."
+            verdict = ("Kamera si expozici řídí sama – to je v pořádku pro "
+                       "běžné pozorování, ale pro měření kontaminace ji vypněte "
+                       "(záložka Expozice → Automatická expozice).")
+        elif moved:
+            head = "Něco mění nastavení expozice na pozadí."
+            verdict = ("Přestože je automatika vypnutá, změnilo se: "
+                       + ", ".join(moved)
+                       + ". Měření, které porovnává snímky mezi sebou, tím "
+                         "utrpí. Podívejte se do podrobností, která hodnota "
+                         "utíká.")
+        elif drift > 2.0:
+            head = "Hodnoty drží, ale jas obrazu kolísá."
+            verdict = ("Nastavení expozice se nezměnilo, přesto se střední "
+                       "jas pohnul o {:.2f} ADU. To bývá skutečná změna scény "
+                       "nebo osvětlení – zkontrolujte, že LED svítí stabilně "
+                       "a že do mikroskopu nejde okolní světlo.".format(drift))
+        else:
+            head = "Expozice je stabilní."
+            verdict = ("Za dobu sledování se nezměnila žádná sledovaná hodnota "
+                       "a jas obrazu se držel v rozkmitu {:.2f} ADU. Nic na "
+                       "pozadí expozici nedorovnává.".format(drift))
+        return head, verdict, "\n".join(lines)
+
     def checkVideo(self) -> None:
         """Rozbor libovolného nahraného souboru (nabídka ☰)."""
         path, _ = QFileDialog.getOpenFileName(
@@ -1117,62 +1241,170 @@ class MainWindow(QMainWindow):
         elif self.camera is not None:
             self.resetDefaults()
 
-    def saveProfile(self) -> None:
+    def _cameraSettings(self) -> Optional[Dict]:
+        """Vlastnosti kamery tak, jak je právě hlásí."""
         if self.camera is None:
-            self.statusMessage("Profil lze uložit až po připojení kamery.")
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Uložit profil nastavení",
-            os.path.join(self._ensureDir(), "profil.json"), "JSON (*.json)")
-        if not path:
-            return
-        data = {"backend": self.camera.name, "values": {}}
+            return None
+        values = {}
         for key, spec in self.specs.items():
             if spec.kind in (KIND_ACTION, KIND_READONLY) or spec.write_only or spec.hidden:
                 continue
             try:
-                data["values"][key] = self.camera.get(key)
+                values[key] = self.camera.get(key)
             except Exception:
                 pass
+        data = {"backend": self.camera.name, "values": values}
         try:
-            with open(path, "w", encoding="utf-8") as handle:
-                json.dump(data, handle, indent=2, ensure_ascii=False)
+            index = self.camera.get_resolution()
+            data["resolution"] = index
+            size = self.camera.resolutions()[index]
+            data["resolution_size"] = [size[0], size[1]]
+        except Exception:
+            pass
+        try:
+            data["codec"] = self.camera.get_codec()
+        except Exception:
+            pass
+        return data
+
+    def _captureSettings(self) -> Dict:
+        return {"save_dir": self.save_dir,
+                "timelapse_interval": self.spin_interval.value(),
+                "um_per_px": self.view.um_per_px}
+
+    def saveProfile(self) -> None:
+        """Uloží celé nastavení – kameru, osvětlení, rozbor i snímání."""
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Uložit kompletní nastavení",
+            workspace.default_name(self._ensureDir()), "JSON (*.json)")
+        if not path:
+            return
+        if not path.lower().endswith(".json"):
+            path += ".json"
+        data = workspace.new(
+            camera=self._cameraSettings(),
+            leds=self.led_panel.workspaceSettings(),
+            darkfield=self.df_panel.settings(self._darkFieldRoi()).to_dict(),
+            capture=self._captureSettings())
+        try:
+            workspace.save(path, data)
         except OSError as exc:
             QMessageBox.warning(self, APP_NAME, str(exc))
             return
         self.refreshProfiles()
-        self.statusMessage(f"Profil uložen: {os.path.basename(path)}")
+        note = "" if self.camera is not None else " (bez kamery – ta se neuložila)"
+        self.statusMessage(f"Nastavení uloženo: {os.path.basename(path)}{note}", 6000)
 
     def loadProfile(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Načíst profil nastavení",
+        path, _ = QFileDialog.getOpenFileName(self, "Načíst kompletní nastavení",
                                               self.save_dir, "JSON (*.json)")
         if path:
             self.applyProfile(path)
 
     def applyProfile(self, path: str) -> None:
-        if self.camera is None:
-            self.statusMessage("Profil lze použít až po připojení kamery.")
-            return
+        """Použije uložené nastavení. Chybějící oddíly se prostě přeskočí."""
         try:
-            with open(path, encoding="utf-8") as handle:
-                data = json.load(handle)
-        except (OSError, ValueError) as exc:
+            data = workspace.load(path)
+        except workspace.WorkspaceError as exc:
             QMessageBox.warning(self, APP_NAME, str(exc))
             return
-        skipped = []
-        for key, value in (data.get("values") or {}).items():
+
+        done, skipped = [], []
+
+        camera = workspace.section(data, "camera")
+        if camera.get("values"):
+            if self.camera is None:
+                skipped.append("kamera (není připojená)")
+            else:
+                done.append(self._applyCameraSettings(camera))
+
+        leds = workspace.section(data, "leds")
+        if leds:
+            self.led_panel.applyWorkspaceSettings(leds)
+            done.append("osvětlení" + ("" if self.led_panel.link.is_open()
+                                       else " (deska nepřipojena, jen ovládání)"))
+
+        dark = workspace.section(data, "darkfield")
+        if dark:
+            self.df_panel.applySettings(dark)
+            done.append("Dark Field")
+
+        capture = workspace.section(data, "capture")
+        if capture:
+            self._applyCaptureSettings(capture)
+            done.append("snímání")
+
+        message = "Načteno z „{}“: {}".format(os.path.basename(path),
+                                              ", ".join(done) or "nic známého")
+        if skipped:
+            message += " · přeskočeno: " + ", ".join(skipped)
+        self.statusMessage(message, 8000)
+
+    def _applyCameraSettings(self, camera: Dict) -> str:
+        """Nastaví kameru; vrátí popis pro hlášku."""
+        # Rozlišení a kodek jdou měnit jen při zastaveném streamu, takže se
+        # musí vyřídit dřív než vlastnosti – jinak by se stream restartoval
+        # až po nich a část nastavení by se ztratila.
+        if not self.isRecording():
+            for key, setter in (("resolution", self.camera.set_resolution),
+                                ("codec", self.camera.set_codec)):
+                if key not in camera:
+                    continue
+                try:
+                    if int(camera[key]) != (self.camera.get_resolution()
+                                            if key == "resolution"
+                                            else self.camera.get_codec()):
+                        self._restartWith(setter, int(camera[key]))
+                except Exception:
+                    pass
+
+        failed = []
+        for key, value in (camera.get("values") or {}).items():
             if key not in self.specs:
-                skipped.append(key)
+                failed.append(key)
                 continue
             try:
                 self.camera.set(key, int(value))
             except Exception:
-                skipped.append(key)
+                failed.append(key)
         self._loadValues()
-        message = "Profil „{}“ načten.".format(os.path.basename(path))
-        if skipped:
-            message += f" Nepoužito: {', '.join(sorted(skipped))}"
-        self.statusMessage(message, 5000)
+        self._fillResolutions()
+        text = "kamera ({} vlastností)".format(
+            len(camera.get("values") or {}) - len(failed))
+        if failed:
+            text += ", nepoužito: " + ", ".join(sorted(failed))
+        return text
+
+    def _restartWith(self, setter, value: int) -> None:
+        """Zastaví stream, něco přenastaví a zase ho spustí."""
+        running = self.camera.is_running()
+        if running:
+            self.camera.stop()
+        setter(value)
+        if running:
+            self.camera.start(self._sdkCallback)
+
+    def _applyCaptureSettings(self, capture: Dict) -> None:
+        if capture.get("save_dir"):
+            self.save_dir = str(capture["save_dir"])
+            self.settings.setValue("save_dir", self.save_dir)
+            self.df_panel.setSaveDir(self.save_dir)
+            self._updateDirLabel()
+            self.refreshProfiles()
+        if "timelapse_interval" in capture:
+            try:
+                self.spin_interval.setValue(int(capture["timelapse_interval"]))
+            except (TypeError, ValueError):
+                pass
+        scale = capture.get("um_per_px")
+        if scale:
+            try:
+                self.view.um_per_px = float(scale)
+            except (TypeError, ValueError):
+                pass
+            else:
+                self.settings.setValue("um_per_px", self.view.um_per_px)
+                self.df_panel.setScaleInfo(self.view.um_per_px)
 
     # ============================================================ zobrazení ==
     def zoomFit(self) -> None:

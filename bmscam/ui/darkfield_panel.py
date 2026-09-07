@@ -406,6 +406,30 @@ class DarkFieldPanel(QWidget):
     def wantsRoi(self) -> bool:
         return self.chk_roi.isChecked()
 
+    def applySettings(self, data: dict) -> None:
+        """Obnoví nastavení rozboru z uloženého souboru.
+
+        Neznámé a nesmyslné hodnoty se přeskočí – soubor mohl vzniknout
+        v jiné verzi a kvůli jednomu poli nemá smysl zahodit zbytek."""
+        if not isinstance(data, dict):
+            return
+        pairs = ((self.spin_interval, "interval_s"), (self.spin_sigma, "sigma"),
+                 (self.spin_abs, "absolute"), (self.spin_minarea, "min_area_px"),
+                 (self.spin_bias_frames, "bias_frames"))
+        for widget, key in pairs:
+            if key in data:
+                try:
+                    widget.setValue(type(widget.value())(data[key]))
+                except (TypeError, ValueError):
+                    pass
+        mode = data.get("threshold_mode")
+        if mode in (df.THRESHOLD_SIGMA, df.THRESHOLD_ABSOLUTE):
+            self.seg_mode.setCurrentIndex(0 if mode == df.THRESHOLD_SIGMA else 1)
+        if "store_frames" in data:
+            self.chk_store.setChecked(bool(data["store_frames"]))
+        if "roi" in data:
+            self.chk_roi.setChecked(data["roi"] is not None)
+
     # ----------------------------------------------------------- reference --
     def setBias(self, bias: Optional[df.Bias]) -> None:
         self.bias = bias

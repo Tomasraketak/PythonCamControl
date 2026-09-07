@@ -50,8 +50,17 @@ Zdrojový návrh je v [docs/design](docs/design/).
   Hodnotu jde napsat z klávesnice a potvrdit Enterem, nebo krokovat šipkami;
   posuvník a pole se drží spolu. U expozičního času tak jde nastavit přesné
   číslo, na které by se posuvníkem trefovalo těžko.
-* **Profily nastavení** – všechna nastavení kamery se dají uložit do JSON
-  a znovu vyvolat z nabídky *Profil nastavení* v horní části levého panelu.
+* **Kompletní nastavení** – tlačítka *Uložit vše…* a *Načíst…* v horní části
+  levého panelu uloží do jednoho souboru JSON **všechno**: vlastnosti kamery
+  včetně rozlišení a kodeku, osvětlení (jas, barvy, natočení modulů), nastavení
+  rozboru temného pole i snímání (pracovní složka, interval časosběru, měřítko).
+  Soubor se dá přiložit k naměřeným datům, takže je za měsíc jasné, za jakých
+  podmínek vznikla. Starší profily, které měly jen vlastnosti kamery, se načtou
+  taky.
+* **Kontrola stálosti expozice** (☰ → *Kontrola stálosti expozice…*) – sleduje
+  deset sekund hodnoty čtené z kamery i střední jas obrazu a řekne, jestli
+  expozici něco nedorovnává na pozadí. Před měřením kontaminace se to vyplatí
+  spustit.
 * **Sbalitelné panely** – levý (kamera) i pravý (osvětlení) panel se dají
   sbalit tlačítkem se šipkou a uvolnit tak celé okno pro obraz.
 * **Osvětlení** – řízení čtyř modulů FC101 (8× WS2812) uspořádaných do stran
@@ -166,6 +175,12 @@ spektra kontrastují líp, i v temném poli, kde na vlnové délce závisí rozp
 
 Údaje jsou z katalogových listů běžných WS2812B; kus od kusu se liší.
 
+**Natočení modulů.** Který modul sketch adresuje jako první, závisí na tom,
+kde se připojil datový vodič – popisky stran pak nemusí sedět na skutečnost.
+Combo *Natočení* pod jednotlivými stranami to srovná: dejte „sólo“ horní
+straně a vyberte tu, která se doopravdy rozsvítila. Výchozí hodnota je
+*1. modul: pravý*, což odpovídá zapojení, na kterém se to zkoušelo.
+
 > **Napájení:** 32 LED odebírá při plné bílé až 1,9 A – moduly potřebují
 > samostatný zdroj 5 V / 3 A a společnou zem s Arduinem. Nikdy je nenapájejte
 > z pinu 5V na desce. Kompletní schéma zapojení, seznam součástek a popis
@@ -268,6 +283,7 @@ Stav obou SDK ukáže *Kamera → Diagnostika SDK*.
 main.py                       spouštěč
 bmscam/
     app.py                    zpracování parametrů příkazové řádky
+    workspace.py              kompletní nastavení v jednom souboru (bez Qt)
     qtenv.py                  nalezení knihoven Qt (řeší chybu qwindows.dll)
     videocheck.py             rozbor nahraného videa (proč nejde přehrát)
     darkfield.py              rozbor kontaminace v temném poli (bez Qt)

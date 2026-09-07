@@ -123,6 +123,7 @@ def test_led_panel_reflects_board_state():
     app = _app()
     panel = LedPanel()
     try:
+        panel.setRotation(0)             # moduly zapojené podle popisků
         panel._setConnected(True)
         for line in ("READY BMSLED 1.0 PANELS=4 LEDS=8",
                      "STATE MASTER 1 200",
@@ -140,6 +141,149 @@ def test_led_panel_reflects_board_state():
         assert panel.panels[3].color() == (1, 2, 3)
     finally:
         panel.shutdown()
+
+
+def test_led_panel_maps_sides_to_wiring():
+    """Popisek strany musí sedět na modul, který na té straně opravdu leží."""
+    from bmscam.leds import DEFAULT_ROTATION, LedProtocol
+    from bmscam.ui.led_panel import LedPanel
+
+    app = _app()
+    panel = LedPanel()
+    try:
+        sent = []
+        panel._send = sent.append
+
+        # Výchozí zapojení: první modul leží vpravo, „Horní“ je tedy modul 4.
+        assert DEFAULT_ROTATION == 1
+        panel.setRotation(DEFAULT_ROTATION)
+        sent.clear()
+        panel._onSolo(1)                        # strana „Horní“
+        assert sent == [LedProtocol.only(4)], sent
+        sent.clear()
+        panel._onSolo(2)                        # strana „Pravý“
+        assert sent == [LedProtocol.only(1)], sent
+
+        # Šikmé osvětlení jde stejnou cestou.
+        sent.clear()
+        panel._onDirection(0)                   # tlačítko „H“
+        assert sent == [LedProtocol.only(4)], sent
+
+        # Stav z desky se rozřadí zpátky na správné strany.
+        panel._setConnected(True)
+        panel._onLine("STATE 4 1 255 9 9 9")    # modul 4 = horní strana
+        app.processEvents()
+        assert panel.panels[0].color() == (9, 9, 9)
+
+        # Bez natočení adresuje aplikace moduly přímo.
+        panel.setRotation(0)
+        sent.clear()
+        panel._onSolo(1)
+        assert sent == [LedProtocol.only(1)], sent
+    finally:
+        panel.setRotation(DEFAULT_ROTATION)
+        panel.shutdown()
+
+
+def test_workspace_roundtrip_and_old_profile():
+    """Kompletní nastavení se uloží a načte; starý profil kamery se povýší."""
+    import json
+    import shutil
+    import tempfile
+
+    from bmscam import workspace
+
+    folder = tempfile.mkdtemp()
+    try:
+        data = workspace.new(
+            camera={"backend": "uvcham", "values": {"expotime": 1234, "again": 100},
+                    "resolution": 0, "resolution_size": [3840, 2160], "codec": 1},
+            leds={"rotation": 1, "master_on": True, "master_brightness": 200,
+                  "panels": [{"on": True, "brightness": 255, "color": [255, 0, 0]}]},
+            darkfield={"interval_s": 10.0, "threshold_mode": "sigma", "sigma": 5.0},
+            capture={"save_dir": folder, "timelapse_interval": 15, "um_per_px": 0.5})
+        path = os.path.join(folder, "nastaveni.json")
+        workspace.save(path, data)
+
+        back = workspace.load(path)
+        assert back["format"] == workspace.FORMAT
+        assert workspace.section(back, "camera")["values"]["expotime"] == 1234
+        assert workspace.section(back, "leds")["rotation"] == 1
+        assert workspace.section(back, "capture")["timelapse_interval"] == 15
+        summary = " ".join(workspace.describe(back))
+        assert "3840×2160" in summary and "Dark Field" in summary
+
+        # starý profil (jen vlastnosti kamery v kořeni) se přečte taky
+        old_path = os.path.join(folder, "stary.json")
+        with open(old_path, "w", encoding="utf-8") as fh:
+            json.dump({"backend": "demo", "values": {"again": 42}}, fh)
+        old = workspace.load(old_path)
+        assert workspace.section(old, "camera")["values"]["again"] == 42
+
+        # poškozený soubor je hlášená chyba, ne pád
+        bad = os.path.join(folder, "spatny.json")
+        with open(bad, "w", encoding="utf-8") as fh:
+            fh.write("{tohle není JSON")
+        try:
+            workspace.load(bad)
+        except workspace.WorkspaceError:
+            pass
+        else:
+            raise AssertionError("poškozený soubor se měl ohlásit")
+
+        # výchozí složka končí na „BMS fotky“ ve Stažených souborech
+        default = workspace.default_save_dir()
+        assert default.endswith(workspace.FOLDER_NAME)
+        assert "ownload" in default or "tažen" in default or "tahov" in default
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def test_main_window_saves_and_loads_everything():
+    """Uložit a načíst musí projít celou aplikací, ne jen kamerou."""
+    import shutil
+    import tempfile
+
+    from bmscam import workspace
+    from bmscam.ui.main_window import MainWindow
+
+    _app()
+    win = MainWindow(prefer_demo=True)
+    folder = tempfile.mkdtemp()
+    try:
+        win.connectCamera()
+        win.save_dir = folder
+        win.spin_interval.setValue(23)
+        win.view.um_per_px = 0.25
+        win.df_panel.spin_sigma.setValue(7.5)
+        win.led_panel.setRotation(2)
+        win.led_panel.panels[0].setState(True, 111, (10, 20, 30))
+
+        path = os.path.join(folder, "vse.json")
+        workspace.save(path, workspace.new(
+            camera=win._cameraSettings(),
+            leds=win.led_panel.workspaceSettings(),
+            darkfield=win.df_panel.settings(None).to_dict(),
+            capture=win._captureSettings()))
+
+        # všechno přenastavit jinak a pak načíst zpátky
+        win.spin_interval.setValue(5)
+        win.df_panel.spin_sigma.setValue(2.0)
+        win.led_panel.setRotation(0)
+        win.led_panel.panels[0].setState(False, 1, (0, 0, 0))
+        win.applyProfile(path)
+
+        assert win.spin_interval.value() == 23
+        assert win.df_panel.spin_sigma.value() == 7.5
+        assert win.led_panel.rotation == 2
+        assert win.led_panel.panels[0].color() == (10, 20, 30)
+        assert win.led_panel.panels[0].brightness() == 111
+        assert win.view.um_per_px == 0.25
+        assert win.save_dir == folder
+    finally:
+        win.led_panel.setRotation(1)
+        win.close()
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 def test_serial_link_reports_bad_port():
@@ -1139,6 +1283,73 @@ def test_led_panel_has_single_channel_buttons():
     finally:
         panel.shutdown()
         panel.deleteLater()
+
+
+def test_exposure_report_names_the_culprit():
+    """Závěr kontroly expozice musí rozlišit čtyři situace."""
+    from bmscam.ui.main_window import MainWindow
+
+    watched = [("aexpo", "automatika expozice"), ("expotime", "expoziční čas"),
+               ("again", "zisk")]
+    steady = [100.0, 100.4, 100.2]
+
+    head, verdict, detail = MainWindow._exposureReport(
+        watched, {"aexpo": 0, "expotime": 500, "again": 100}, {}, steady)
+    assert "stabilní" in head.lower(), head
+    assert "stálá na 500" in detail
+
+    head, verdict, detail = MainWindow._exposureReport(
+        watched, {"aexpo": 1, "expotime": 500, "again": 100}, {}, steady)
+    assert "utomatika" in head and "vypněte" in verdict
+
+    head, verdict, detail = MainWindow._exposureReport(
+        watched, {"aexpo": 0, "expotime": 500, "again": 100},
+        {"expotime": {600, 700}}, steady)
+    assert "pozadí" in head, head
+    assert "expoziční čas" in verdict
+    assert "MĚNILA SE" in detail
+
+    head, verdict, detail = MainWindow._exposureReport(
+        watched, {"aexpo": 0, "expotime": 500, "again": 100}, {},
+        [100.0, 130.0])
+    assert "jas obrazu kolísá" in head, head
+    assert "30.00" in verdict
+
+    # bez jediného vzorku to nesmí spadnout
+    head, verdict, detail = MainWindow._exposureReport(watched, {}, {}, [])
+    assert "nehlásí" in detail
+
+
+def test_exposure_check_runs_against_demo_camera():
+    """Kontrola projde celou cestou přes skutečné okno a simulovanou kameru."""
+    import time as _time
+
+    from bmscam.ui.main_window import MainWindow
+    from PyQt5.QtWidgets import QMessageBox
+
+    app = _app()
+    win = MainWindow(prefer_demo=True)
+    shown = QMessageBox.exec_
+    QMessageBox.exec_ = lambda self: 0          # bez modálního okna
+    try:
+        win.connectCamera()
+        deadline = _time.time() + 5.0
+        while _time.time() < deadline and not win.view.hasImage():
+            app.processEvents()
+            _time.sleep(0.02)
+        # simulovaná kamera startuje se zapnutou automatikou – to musí poznat
+        win.camera.set("aexpo", 1)
+        verdict = win.checkExposure(seconds=2.0)
+        assert "vypněte" in verdict, verdict
+
+        # s ruční expozicí už si nemá na co stěžovat
+        win.camera.set("aexpo", 0)
+        verdict = win.checkExposure(seconds=2.0)
+        assert verdict, "kontrola nevrátila závěr"
+        assert "vypněte" not in verdict, verdict
+    finally:
+        QMessageBox.exec_ = shown
+        win.close()
 
 
 if __name__ == "__main__":

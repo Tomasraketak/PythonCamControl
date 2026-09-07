@@ -9,7 +9,9 @@ from PyQt5.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QFrame,
                              QPlainTextEdit, QPushButton, QSizePolicy, QSlider,
                              QSpinBox, QVBoxLayout, QWidget)
 
-from ..leds import (BAUD, LEDS_PER_PANEL, PANEL_NAMES, PANEL_SHORT, PANELS,
+from .. import leds as leds_mod
+from ..leds import (BAUD, DEFAULT_ROTATION, LEDS_PER_PANEL, PANEL_NAMES,
+                    PANEL_SHORT, PANELS,
                     CHANNELS, PRESETS, LedProtocol, LedState, color_to_hex)
 from ..serialio import (SerialLink, available, guess_arduino_port,
                         list_serial_ports, unavailable_reason)
@@ -146,6 +148,12 @@ class PanelWidget(QFrame):
     def color(self):
         return self._color
 
+    def isOn(self) -> bool:
+        return self.chk_on.isChecked()
+
+    def brightness(self) -> int:
+        return self.spin.value()
+
     def setState(self, on: bool, brightness: int, color) -> None:
         self._updating = True
         try:
@@ -167,6 +175,7 @@ class LedPanel(QWidget):
         self.settings = QSettings("BMS", "CamControl")
         self.link = SerialLink(self)
         self.state = LedState()
+        self.rotation = int(self.settings.value("led_rotation", DEFAULT_ROTATION))
         self._pending_brightness = {}
         self._history: List[str] = []
         self._history_pos = 0
@@ -330,6 +339,21 @@ class LedPanel(QWidget):
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
         lay.addLayout(grid)
+
+        # Který modul leží nahoře, závisí na tom, kde se připojil datový
+        # vodič. Bez tohohle přepínače by se to dalo spravit jen přepájením.
+        self.cmb_rotation = QComboBox()
+        for steps in range(PANELS):
+            self.cmb_rotation.addItem(
+                "1. modul: {}".format(PANEL_NAMES[steps % PANELS].lower()), steps)
+        self.cmb_rotation.setToolTip(
+            "Kde ve skutečnosti leží modul, který sketch adresuje jako první.\n"
+            "Zkuste „sólo“ u horní strany – když se rozsvítí jiná, přepněte "
+            "sem tu, která se rozsvítila.")
+        index = self.cmb_rotation.findData(self.rotation)
+        self.cmb_rotation.setCurrentIndex(max(0, index))
+        self.cmb_rotation.activated.connect(self._onRotationChosen)
+        lay.addLayout(row(label("Natočení", "meta"), None, (self.cmb_rotation, 2)))
         return box
 
     def _buildConsoleBox(self) -> QWidget:
@@ -469,6 +493,57 @@ class LedPanel(QWidget):
             self.lbl_status.setText(
                 "Nepřipojeno." if available() else unavailable_reason())
 
+    # ============================================================= nastavení =
+    def workspaceSettings(self) -> dict:
+        """Nastavení osvětlení pro uložení do souboru."""
+        return {
+            "port": self.link.port_name() if self.link.is_open() else "",
+            "rotation": self.rotation,
+            "master_on": self.chk_master.isChecked(),
+            "master_brightness": self.spin_master.value(),
+            "panels": [{"on": w.isOn(), "brightness": w.brightness(),
+                        "color": list(w.color())} for w in self.panels],
+        }
+
+    def applyWorkspaceSettings(self, data: dict) -> None:
+        """Obnoví nastavení ze souboru a pošle je do Arduina, když je připojené.
+
+        Ovládací prvky se nastaví vždycky, i bez připojené desky – po
+        připojení se pak dá stav odeslat tlačítkem, nic se neztratí."""
+        if not isinstance(data, dict):
+            return
+        if "rotation" in data:
+            self.setRotation(int(data["rotation"]))
+
+        for entry, widget in zip(data.get("panels") or [], self.panels):
+            if not isinstance(entry, dict):
+                continue
+            color = entry.get("color") or widget.color()
+            widget.setState(bool(entry.get("on", True)),
+                            int(entry.get("brightness", widget.brightness())),
+                            tuple(int(c) for c in color)[:3])
+            if self.link.is_open():
+                wire = self._wire(widget.index)
+                self._send(LedProtocol.panel_color(wire, widget.color()))
+                self._send(LedProtocol.panel_brightness(wire, widget.brightness()))
+                self._send(LedProtocol.panel_power(wire, widget.isOn()))
+
+        if "master_brightness" in data:
+            value = int(data["master_brightness"])
+            for widget in (self.slider_master, self.spin_master):
+                widget.blockSignals(True)
+                widget.setValue(value)
+                widget.blockSignals(False)
+            if self.link.is_open():
+                self._send(LedProtocol.all_brightness(value))
+        if "master_on" in data:
+            on = bool(data["master_on"])
+            self.chk_master.blockSignals(True)
+            self.chk_master.setChecked(on)
+            self.chk_master.blockSignals(False)
+            if self.link.is_open():
+                self._send(LedProtocol.all_power(on))
+
     # ================================================================ příjem =
     def _onLine(self, line: str) -> None:
         color = theme.ACCENT if LedProtocol.is_error(line) else "#2b6cb0"
@@ -492,8 +567,9 @@ class LedPanel(QWidget):
         finally:
             for widget in (self.chk_master, self.slider_master, self.spin_master):
                 widget.blockSignals(False)
-        for index, widget in enumerate(self.panels):
-            panel = self.state.panels[index]
+        # Arduino hlásí čísla modulů, ne strany – přerovnat podle natočení.
+        for wire, panel in enumerate(self.state.panels, start=1):
+            widget = self.panels[leds_mod.gui_index(wire, self.rotation)]
             widget.setState(panel.on, panel.brightness, panel.color)
 
     # =============================================================== odeslání
@@ -545,18 +621,39 @@ class LedPanel(QWidget):
             self._onSolo(index + 1)
 
     # ------------------------------------------------------------ jednotlivé
+    def _wire(self, index: int) -> int:
+        """Ze strany zobrazené v aplikaci udělá číslo modulu na sběrnici."""
+        return leds_mod.wire_index(index - 1, self.rotation)
+
+    def setRotation(self, rotation: int) -> None:
+        """Nastaví, o kolik stran je zřetězení modulů natočené."""
+        self.rotation = int(rotation) % PANELS
+        self.settings.setValue("led_rotation", self.rotation)
+        if hasattr(self, "cmb_rotation"):
+            index = self.cmb_rotation.findData(self.rotation)
+            if index >= 0 and index != self.cmb_rotation.currentIndex():
+                self.cmb_rotation.blockSignals(True)
+                self.cmb_rotation.setCurrentIndex(index)
+                self.cmb_rotation.blockSignals(False)
+
+    def _onRotationChosen(self, index: int) -> None:
+        self.setRotation(self.cmb_rotation.itemData(index))
+        if self.link.is_open():
+            self.link.send(LedProtocol.state())   # ať se stav přerovná
+
     def _onPanelPower(self, index: int, on: bool) -> None:
-        self._send(LedProtocol.panel_power(index, on))
+        self._send(LedProtocol.panel_power(self._wire(index), on))
 
     def _onPanelBrightness(self, index: int, value: int) -> None:
+        wire = self._wire(index)
         self._queueBrightness(
-            f"p{index}", lambda i=index, v=value: LedProtocol.panel_brightness(i, v))
+            f"p{wire}", lambda i=wire, v=value: LedProtocol.panel_brightness(i, v))
 
     def _onPanelColor(self, index: int, rgb) -> None:
-        self._send(LedProtocol.panel_color(index, rgb))
+        self._send(LedProtocol.panel_color(self._wire(index), rgb))
 
     def _onSolo(self, index: int) -> None:
-        self._send(LedProtocol.only(index))
+        self._send(LedProtocol.only(self._wire(index)))
 
     def _onCopyToAll(self, rgb) -> None:
         self._setAllColor(tuple(rgb))
