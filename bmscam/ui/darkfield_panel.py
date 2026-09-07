@@ -237,6 +237,8 @@ class DarkFieldPanel(QWidget):
     sampleRequested = pyqtSignal()
     #: spočítat řadu znovu z uložených snímků
     reanalyzeRequested = pyqtSignal()
+    #: uživatel změnil strop fronty v paměti (v MB)
+    queueLimitChanged = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -397,6 +399,20 @@ class DarkFieldPanel(QWidget):
         self.lbl_store = label("", "meta")
         self.lbl_store.setWordWrap(True)
         card.add(self.lbl_store)
+        self.spin_queue = QSpinBox()
+        self.spin_queue.setRange(64, 32768)
+        self.spin_queue.setSingleStep(256)
+        self.spin_queue.setValue(3072)
+        self.spin_queue.setSuffix(" MB")
+        self.spin_queue.setKeyboardTracking(False)
+        self.spin_queue.setFixedWidth(96)
+        self.spin_queue.setToolTip(
+            "Kolik operační paměti smí zabrat fronta čekajících snímků.\n"
+            "Jeden 4K snímek je 8 MB, takže 3072 MB vydrží asi 380 snímků –\n"
+            "přes šest minut snímání po sekundě. Až se fronta zaplní, snímky\n"
+            "se zahazují (a jdou dopočítat z archivu na disku).")
+        self.spin_queue.valueChanged.connect(self.queueLimitChanged)
+        card.add(row(label("Fronta v paměti", "meta"), None, self.spin_queue))
         self.lbl_pending = label("", "meta")
         self.lbl_pending.setWordWrap(True)
         card.add(self.lbl_pending)
@@ -481,6 +497,7 @@ class DarkFieldPanel(QWidget):
             bias_frames=self.spin_bias_frames.value(),
             um_per_px=getattr(self, "_um_per_px", 0.0),
             store_frames=self.chk_store.isChecked(),
+            queue_mb=self.spin_queue.value(),
             multichannel=self.chk_multi.isChecked(),
             settle_ms=int(self.spin_settle.value() * 1000),
             exposure_scale={k: w[0].value() for k, w in self.channel_rows.items()},
@@ -528,7 +545,8 @@ class DarkFieldPanel(QWidget):
             return
         pairs = ((self.spin_interval, "interval_s"), (self.spin_sigma, "sigma"),
                  (self.spin_abs, "absolute"), (self.spin_minarea, "min_area_px"),
-                 (self.spin_bias_frames, "bias_frames"))
+                 (self.spin_bias_frames, "bias_frames"),
+                 (self.spin_queue, "queue_mb"))
         for widget, key in pairs:
             if key in data:
                 try:

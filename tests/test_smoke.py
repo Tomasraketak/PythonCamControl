@@ -1724,6 +1724,28 @@ def test_led_cross_buttons_follow_the_real_layout():
         panel.shutdown()
 
 
+def test_queue_limit_is_settable_from_the_gui():
+    """Strop fronty jde přenastavit v okně a projeví se hned."""
+    from bmscam.ui.main_window import MainWindow
+
+    app = _app()
+    win = MainWindow(prefer_demo=True)
+    try:
+        assert win.df_runner.max_queued_bytes == \
+            win.df_panel.spin_queue.value() * 1024 * 1024
+        win.df_panel.spin_queue.setValue(512)
+        app.processEvents()
+        assert win.df_runner.max_queued_bytes == 512 * 1024 * 1024
+        # hodnota se uloží i do souboru s kompletním nastavením
+        assert win.df_panel.settings().queue_mb == 512
+        win.df_panel.applySettings({"queue_mb": 1024})
+        app.processEvents()
+        assert win.df_runner.max_queued_bytes == 1024 * 1024 * 1024
+    finally:
+        win.settings.remove("df_queue_mb")
+        win.close()
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

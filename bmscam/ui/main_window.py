@@ -98,6 +98,13 @@ class MainWindow(QMainWindow):
 
         self.view.um_per_px = float(self.settings.value("um_per_px", 1.0))
         self.df_panel.setSaveDir(self.save_dir)
+        try:
+            queue_mb = int(self.settings.value("df_queue_mb", 0))
+        except (TypeError, ValueError):
+            queue_mb = 0
+        if queue_mb:
+            self.df_panel.spin_queue.setValue(queue_mb)
+        self._onQueueLimitChanged(self.df_panel.spin_queue.value())
         self.df_panel.setScaleInfo(self.view.um_per_px)
         self.refreshDevices()
         self.refreshProfiles()
@@ -349,6 +356,7 @@ class MainWindow(QMainWindow):
         self.df_panel = DarkFieldPanel()
         self.df_panel.biasRequested.connect(self.startBiasCapture)
         self.df_panel.measureToggled.connect(self._onDarkFieldToggled)
+        self.df_panel.queueLimitChanged.connect(self._onQueueLimitChanged)
         self.df_panel.sampleRequested.connect(lambda: self._requestSample(True))
         self.df_panel.reanalyzeRequested.connect(self.reanalyzeDarkField)
         self.df_scroll = QScrollArea()
@@ -803,6 +811,14 @@ class MainWindow(QMainWindow):
         if mode == "bias":
             self.statusMessage("Reference pořízena pro všechny tři kanály", 5000)
             self._autoSaveBias()
+
+    def _onQueueLimitChanged(self, megabytes: int) -> None:
+        """Strop fronty rozboru v paměti; drží se i po zavření aplikace."""
+        self.df_runner.max_queued_bytes = max(1, int(megabytes)) * 1024 * 1024
+        self.settings.setValue("df_queue_mb", int(megabytes))
+        self.statusMessage(
+            "Fronta rozboru smí zabrat {} MB (asi {} snímků ve 4K)"
+            .format(int(megabytes), max(1, int(megabytes) // 8)), 5000)
 
     def _onDarkFieldFailed(self, message: str) -> None:
         self._df_pending = False

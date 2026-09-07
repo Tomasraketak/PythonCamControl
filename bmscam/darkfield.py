@@ -78,6 +78,7 @@ class Settings:
         self.um_per_px: float = 0.0         # 0 = nekalibrováno
         self.roi: Optional[Tuple[int, int, int, int]] = None   # x, y, w, h
         self.store_frames: bool = True      # ukládat snímky pro zpětný rozbor
+        self.queue_mb: int = 3072           # kolik RAM smí zabrat fronta rozboru
         self.multichannel: bool = False     # měřit postupně pod R, G a B
         self.settle_ms: int = 400           # co počkat po přepnutí barvy
         # násobek expozičního času a posun ostření pro každý kanál
