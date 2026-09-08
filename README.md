@@ -54,6 +54,10 @@ Zdrojový návrh je v [docs/design](docs/design/).
   Hodnotu jde napsat z klávesnice a potvrdit Enterem, nebo krokovat šipkami;
   posuvník a pole se drží spolu. U expozičního času tak jde nastavit přesné
   číslo, na které by se posuvníkem trefovalo těžko.
+* **Barevně / černobíle** – přepínač v horní liště přepíná kameru mezi
+  barevným a monochromatickým obrazem (vlastnost `chrome` v SDK). Pro temné
+  pole a měření po kanálech je čistší černobílý režim; barevná nastavení se
+  v něm zašednou.
 * **Kompletní nastavení** – tlačítka *Uložit vše…* a *Načíst…* v horní části
   levého panelu uloží do jednoho souboru JSON **všechno**: vlastnosti kamery
   včetně rozlišení a kodeku, osvětlení (jas, barvy, natočení modulů), nastavení

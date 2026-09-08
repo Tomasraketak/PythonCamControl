@@ -1746,6 +1746,50 @@ def test_queue_limit_is_settable_from_the_gui():
         win.close()
 
 
+def test_camera_switches_between_color_and_mono():
+    """Přepínač v liště přepne kameru mezi barevným a černobílým obrazem."""
+    import numpy as np
+
+    from bmscam import darkfield as df
+    from bmscam.ui.main_window import MainWindow
+
+    app = _app()
+    win = MainWindow(prefer_demo=True)
+    win.connectCamera()
+    try:
+        assert win.seg_color.isEnabled(), "kamera hlásí, že režim umí"
+        assert not win.isMonochrome()
+
+        def frame_gray():
+            frame = win.camera.pull()
+            raw = np.frombuffer(frame.data, dtype=np.uint8)
+            raw = raw[: frame.stride * frame.height].reshape(frame.height,
+                                                             frame.stride)
+            return raw[:, : frame.width * 3].reshape(frame.height, frame.width, 3)
+
+        win.seg_color.setCurrentIndex(1)          # jako kliknutí na „Černobíle“
+        app.processEvents()
+        assert win.isMonochrome()
+        assert win.camera.get("chrome") == 1
+        pixels = frame_gray()
+        assert np.array_equal(pixels[:, :, 0], pixels[:, :, 2]), "obraz není šedý"
+        # dark field pozná černobílý obraz a nemusí složky průměrovat
+        assert df.to_gray_u8(win.camera.pull()).ndim == 2
+
+        # barevné doladění nemá v černobílém režimu co dělat
+        for panel in win.panels.values():
+            row_ = panel.rows.get("saturation")
+            if row_ is not None and getattr(row_, "slider", None) is not None:
+                assert not row_.slider.isEnabled()
+
+        win.seg_color.setCurrentIndex(0)
+        app.processEvents()
+        assert not win.isMonochrome()
+        assert win.camera.get("chrome") == 0
+    finally:
+        win.close()
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

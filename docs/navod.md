@@ -64,10 +64,16 @@ Postupujte v tomhle pořadí, protože každý krok ovlivňuje ten další:
    obraz nesrovnáte, pak ji **vypněte** a čas i zisk dolaďte ručně.
    Automatika mění jas mezi snímky, což vadí u časosběru i u měření
    kontaminace.
-3. **Vyvážení bílé** (záložka *Barvy*) – u černobílé kamery nemá smysl.
+3. **Barevně / Černobíle** – přepínač v horní liště vedle zoomu. Kamera umí
+   obojí; barevný obraz je běžné snímání a dokumentace, černobílý se hodí
+   pro temné pole a měření po kanálech (odpadne demozaikování a barevný
+   šum). V černobílém režimu se barevná nastavení – sytost, odstín, vyvážení
+   bílé – zašednou, protože nemají co ovlivnit. Nastavení se ukládá do
+   kompletního nastavení spolu s ostatními vlastnostmi kamery.
+4. **Vyvážení bílé** (záložka *Barvy*) – v černobílém režimu nemá smysl.
    U barevné: *Zobrazení → Výběr oblasti pro WB*, vyberte myší kus bílého
    pozadí a dejte **Vyvážit**.
-4. **Zaostření** (záložka *Ostření*) – ruční poloha, nebo jednorázové
+5. **Zaostření** (záložka *Ostření*) – ruční poloha, nebo jednorázové
    automatické zaostření (`Ctrl+F`).
 
 ### Přesné hodnoty

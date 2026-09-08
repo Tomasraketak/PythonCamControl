@@ -270,6 +270,20 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.seg_zoom)
         lay.addWidget(vline())
 
+        # Kamera umí oba režimy; přepínač je tady, protože se s ním hýbe
+        # při práci často – v seznamu vlastností by se hledal špatně.
+        self.seg_color = SegmentedControl(["Barevně", "Černobíle"])
+        self.seg_color.setFixedWidth(160)
+        self.seg_color.setToolTip(
+            "Barevný, nebo černobílý obraz.\n"
+            "Černobílý režim se hodí pro temné pole a měření po kanálech – "
+            "odpadne demozaikování a barevný šum.")
+        self.seg_color.setEnabled(False)
+        self.seg_color.currentChanged.connect(
+            lambda index: self.setMonochrome(index == 1))
+        lay.addWidget(self.seg_color)
+        lay.addWidget(vline())
+
         btn_out = icon_button("minus", "Oddálit")
         btn_out.clicked.connect(lambda: self.view.zoomBy(1 / 1.25))
         lay.addWidget(btn_out)
@@ -589,11 +603,20 @@ class MainWindow(QMainWindow):
         self._updateStats(values)
 
     def _applyDependencies(self, values: Dict[str, int]) -> None:
+        mono = bool(values.get("chrome", 0))
+        self.seg_color.setEnabled("chrome" in self.specs)
+        if "chrome" in values:
+            self.seg_color.setCurrentIndex(1 if mono else 0, emit=False)
+        # v černobílém režimu nemá barevné doladění co ovlivnit
+        for key in ("saturation", "hue", "wbmode", "wbred", "wbgreen",
+                    "wbblue", "temp", "tint"):
+            if mono:
+                self._setRowEnabled(key, False)
         auto_expo = bool(values.get("aexpo", 0))
         for key in ("expotime", "again"):
             self._setRowEnabled(key, not auto_expo)
         wbmode = values.get("wbmode")
-        manual_wb = wbmode is None or wbmode == 0
+        manual_wb = (wbmode is None or wbmode == 0) and not mono
         for key in ("wbred", "wbgreen", "wbblue", "temp", "tint"):
             self._setRowEnabled(key, manual_wb)
         afmode = values.get("afmode")
@@ -846,6 +869,12 @@ class MainWindow(QMainWindow):
             # řada se uložila při zastavení, takže se nic neztratí.
             self.df_panel.clearSeries()
             self.df_runner.dropped = 0
+            if not self.isMonochrome():
+                # Z barevného obrazu se šeď počítá průměrem složek; jde to,
+                # ale demozaikování přidá šum, který v černobílém režimu není.
+                self.statusMessage(
+                    "Pozor: kamera snímá barevně. Pro temné pole je přesnější "
+                    "černobílý režim (přepínač nahoře).", 8000)
             self.df_timer.start(max(200, int(interval * 1000)))
             self._requestSample()          # první měření hned, ne až za interval
             self.statusMessage(f"Měření kontaminace běží po {interval:g} s", 4000)
@@ -1106,6 +1135,27 @@ class MainWindow(QMainWindow):
             return
         if key in ("aexpo", "wbmode", "afmode"):
             QTimer.singleShot(50, self._loadValues)
+
+    def setMonochrome(self, mono: bool) -> None:
+        """Přepne kameru mezi barevným a černobílým obrazem."""
+        if self.camera is None or "chrome" not in self.specs:
+            self.statusMessage("Kamera přepínání barevného režimu nenabízí.", 5000)
+            return
+        try:
+            self.camera.set("chrome", 1 if mono else 0)
+        except CameraError as exc:
+            self.statusMessage(f"Barevný režim: {exc}", 6000)
+            return
+        self._loadValues()
+        self.statusMessage("Obraz: " + ("černobílý" if mono else "barevný"), 4000)
+
+    def isMonochrome(self) -> bool:
+        if self.camera is None or "chrome" not in self.specs:
+            return False
+        try:
+            return bool(self.camera.get("chrome"))
+        except Exception:                                  # noqa: BLE001
+            return False
 
     def doAction(self, key: str) -> None:
         if self.camera is None or key not in self.specs:

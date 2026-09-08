@@ -171,13 +171,15 @@ class SegmentedControl(QWidget):
             self.group, "idClicked") else self.group.buttonClicked[int].connect(
             self.currentChanged)
 
-    def setCurrentIndex(self, index: int) -> None:
+    def setCurrentIndex(self, index: int, emit: bool = True) -> None:
         """Přepne volbu. Ohlásí to stejně jako kliknutí, ale jen při změně –
-        jinak by se program mohl zacyklit."""
+        jinak by se program mohl zacyklit. S ``emit=False`` jen srovná
+        zobrazený stav podle skutečnosti, aniž by se něco spouštělo."""
         if not 0 <= index < len(self.buttons) or self.currentIndex() == index:
             return
         self.buttons[index].setChecked(True)
-        self.currentChanged.emit(index)
+        if emit:
+            self.currentChanged.emit(index)
 
     def currentIndex(self) -> int:
         return self.group.checkedId()
