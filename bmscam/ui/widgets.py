@@ -43,10 +43,11 @@ def button(text: str = "", variant: str = "secondary", icon_name: str = "",
     btn.setProperty("variant", variant)
     btn.setCursor(Qt.PointingHandCursor)
     if icon_name:
-        color = theme.BG if variant == "primary" else (
-            theme.ACCENT if variant == "ghost" else theme.TEXT)
-        btn.setIcon(theme.icon(icon_name, color, 15))
+        btn._icon_name = icon_name
+        btn._icon_variant = variant
         btn.setIconSize(QSize(15, 15))
+        _refresh_text_icon(btn)
+        theme.on_change(lambda b=btn: _refresh_text_icon(b), btn)
     if tooltip:
         btn.setToolTip(tooltip)
     return btn
@@ -63,6 +64,7 @@ def icon_button(icon_name: str, tooltip: str = "", checkable: bool = False,
     btn.setIconSize(QSize(16, 16))
     btn._icon_name = icon_name
     _refresh_icon(btn)
+    theme.on_change(lambda b=btn: _refresh_icon(b), btn)
     if checkable:
         btn.toggled.connect(lambda _=False, b=btn: _refresh_icon(b))
     if tooltip:
@@ -70,8 +72,16 @@ def icon_button(icon_name: str, tooltip: str = "", checkable: bool = False,
     return btn
 
 
+def _refresh_text_icon(btn: QPushButton) -> None:
+    """Ikona u textového tlačítka – barvu určuje varianta a paleta."""
+    variant = getattr(btn, "_icon_variant", "secondary")
+    color = theme.ON_ACCENT if variant == "primary" else (
+        theme.ACCENT if variant == "ghost" else theme.TEXT)
+    btn.setIcon(theme.icon(btn._icon_name, color, 15))
+
+
 def _refresh_icon(btn: QPushButton) -> None:
-    color = theme.BG if btn.isChecked() else theme.TEXT
+    color = theme.ON_ACCENT if btn.isChecked() else theme.TEXT
     btn.setIcon(theme.icon(btn._icon_name, color, 16))
 
 
@@ -113,15 +123,22 @@ class Tag(QLabel):
         self.setAlignment(Qt.AlignCenter)
         self.setContentsMargins(0, 0, 0, 0)
         self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        self._active = active
         self.set_active(active)
+        theme.on_change(self._applyTheme)
 
     def set_active(self, active: bool, text: Optional[str] = None) -> None:
         if text is not None:
             self.setText(text)
+        self._active = active
+        self._applyTheme()
+
+    def _applyTheme(self) -> None:
+        active = self._active
         if active:
             self.setStyleSheet(
                 f"border:1px solid {theme.ACCENT}; background:{theme.ACCENT};"
-                f"color:{theme.BG}; font-size:11px; padding:2px 9px;")
+                f"color:{theme.ON_ACCENT}; font-size:11px; padding:2px 9px;")
         else:
             self.setStyleSheet(
                 f"border:1px solid {theme.ACCENT}; color:{theme.ACCENT};"
@@ -138,7 +155,7 @@ class SegmentedControl(QWidget):
                  compact: bool = False, preselect: bool = True):
         super().__init__(parent)
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setStyleSheet(f"SegmentedControl {{ border: 1px solid {theme.DIVIDER}; }}")
+        self._compact = compact
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
@@ -150,6 +167,23 @@ class SegmentedControl(QWidget):
             btn.setCheckable(True)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            self.group.addButton(btn, index)
+            lay.addWidget(btn)
+            self.buttons.append(btn)
+        self._applyTheme()
+        theme.on_change(self._applyTheme)
+        if self.buttons and preselect:
+            self.buttons[0].setChecked(True)
+        self.group.idClicked.connect(self.currentChanged) if hasattr(
+            self.group, "idClicked") else self.group.buttonClicked[int].connect(
+            self.currentChanged)
+
+    def _applyTheme(self) -> None:
+        """Vlastní stylopis prvku – přebarvuje se s paletou."""
+        compact = self._compact
+        self.setStyleSheet(
+            f"SegmentedControl {{ border: 1px solid {theme.DIVIDER}; }}")
+        for index, btn in enumerate(self.buttons):
             border = "" if index == 0 else f"border-left: 1px solid {theme.DIVIDER};"
             padding = "6px 6px" if compact else "7px 10px"
             btn.setStyleSheet(f"""
@@ -159,17 +193,11 @@ class SegmentedControl(QWidget):
                     font-weight: 600; color: {theme.TEXT};
                 }}
                 QPushButton:hover:!checked {{ background: {theme.NEUTRAL_300}; }}
-                QPushButton:checked {{ background: {theme.ACCENT}; color: {theme.BG}; }}
+                QPushButton:checked {{
+                    background: {theme.ACCENT}; color: {theme.ON_ACCENT};
+                }}
                 QPushButton:disabled {{ color: {theme.NEUTRAL_500}; }}
             """)
-            self.group.addButton(btn, index)
-            lay.addWidget(btn)
-            self.buttons.append(btn)
-        if self.buttons and preselect:
-            self.buttons[0].setChecked(True)
-        self.group.idClicked.connect(self.currentChanged) if hasattr(
-            self.group, "idClicked") else self.group.buttonClicked[int].connect(
-            self.currentChanged)
 
     def setCurrentIndex(self, index: int, emit: bool = True) -> None:
         """Přepne volbu. Ohlásí to stejně jako kliknutí, ale jen při změně –

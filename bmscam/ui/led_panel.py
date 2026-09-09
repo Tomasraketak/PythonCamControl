@@ -43,7 +43,6 @@ class PanelWidget(QFrame):
         self.index = index
         self._color = (255, 255, 255)
         self._updating = False
-        self.setStyleSheet(f"PanelWidget {{ border: 1px solid {theme.DIVIDER}; }}")
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
 
@@ -61,10 +60,6 @@ class PanelWidget(QFrame):
         self.btn_solo = QPushButton("sólo")
         self.btn_solo.setToolTip(
             f"Rozsvítit pouze tuto stranu – osvětlení {PANEL_SHORT[index - 1]}")
-        self.btn_solo.setStyleSheet(
-            f"QPushButton {{ border:none; color:{theme.NEUTRAL_600}; font-size:10px;"
-            "padding:0 3px; }"
-            f"QPushButton:hover {{ color:{theme.ACCENT}; }}")
         self.btn_solo.setCursor(Qt.PointingHandCursor)
         self.btn_solo.clicked.connect(lambda: self.soloRequested.emit(self.index))
         head.addWidget(self.btn_solo)
@@ -108,16 +103,27 @@ class PanelWidget(QFrame):
         self.btn_copy = QPushButton("→")
         self.btn_copy.setFixedWidth(26)
         self.btn_copy.setToolTip("Použít tuto barvu na všechny strany")
-        self.btn_copy.setStyleSheet(
-            f"QPushButton {{ border:1px solid {theme.DIVIDER}; padding:3px 0;"
-            "font-size:13px; font-weight:700; }"
-            f"QPushButton:hover {{ background:{theme.NEUTRAL_300}; }}")
         self.btn_copy.setCursor(Qt.PointingHandCursor)
         self.btn_copy.clicked.connect(
             lambda: self.copyToAllRequested.emit(self._color))
         bottom.addWidget(self.btn_copy)
         lay.addLayout(bottom)
 
+        self.setColor(self._color)
+        self._applyTheme()
+        theme.on_change(self._applyTheme)
+
+    def _applyTheme(self) -> None:
+        """Vlastní stylopis karty – po změně palety se překreslí."""
+        self.setStyleSheet(f"PanelWidget {{ border: 1px solid {theme.DIVIDER}; }}")
+        self.btn_solo.setStyleSheet(
+            f"QPushButton {{ border:none; color:{theme.NEUTRAL_600}; font-size:10px;"
+            "padding:0 3px; }"
+            f"QPushButton:hover {{ color:{theme.ACCENT}; }}")
+        self.btn_copy.setStyleSheet(
+            f"QPushButton {{ border:1px solid {theme.DIVIDER}; padding:3px 0;"
+            "font-size:13px; font-weight:700; }"
+            f"QPushButton:hover {{ background:{theme.NEUTRAL_300}; }}")
         self.setColor(self._color)
 
     # ------------------------------------------------------------- pomocné --
@@ -292,6 +298,8 @@ class LedPanel(QWidget):
         for key, name, rgb, typical, span in CHANNELS:
             btn = button(f"{typical} nm")
             btn.setStyleSheet(_swatch_style(rgb))
+            theme.on_change(
+                lambda b=btn, c=rgb: b.setStyleSheet(_swatch_style(c)), btn)
             btn.setToolTip(
                 f"{name} kanál – rozsvítí všechny čtyři strany jen touto "
                 f"složkou.\nVlnová délka {span}, typicky kolem {typical} nm.")
@@ -375,11 +383,6 @@ class LedPanel(QWidget):
             btn.setCursor(Qt.PointingHandCursor)
             btn.setToolTip("Zapnout / vypnout osvětlení {}"
                            .format(PANEL_SHORT[index]))
-            btn.setStyleSheet(
-                f"QPushButton {{ border:1px solid {theme.DIVIDER}; padding:6px 4px;"
-                "font-size:11px; }"
-                f"QPushButton:checked {{ background:{theme.ACCENT}; color:white;"
-                f" border-color:{theme.ACCENT}; }}")
             btn.clicked.connect(
                 lambda on, i=index: self.panels[i].chk_on.setChecked(on))
             # karta a tlačítko v kříži ukazují jeden a týž stav
@@ -390,6 +393,9 @@ class LedPanel(QWidget):
         middle = label("objektiv", "meta")
         middle.setAlignment(Qt.AlignCenter)
 
+        self._styleCrossButtons()
+        theme.on_change(self._styleCrossButtons)
+
         grid.addWidget(self.cross_buttons[0], 0, 1)     # horní
         grid.addWidget(self.cross_buttons[3], 1, 0)     # levá
         grid.addWidget(middle, 1, 1)
@@ -398,6 +404,22 @@ class LedPanel(QWidget):
         for column in range(3):
             grid.setColumnStretch(column, 1)
         return box
+
+    def _styleCrossButtons(self) -> None:
+        for btn in getattr(self, "cross_buttons", []):
+            btn.setStyleSheet(
+                f"QPushButton {{ border:1px solid {theme.DIVIDER}; padding:6px 4px;"
+                f"font-size:11px; color:{theme.TEXT}; }}"
+                f"QPushButton:hover:!checked {{ background:{theme.NEUTRAL_300}; }}"
+                f"QPushButton:checked {{ background:{theme.ACCENT};"
+                f" color:{theme.ON_ACCENT}; border-color:{theme.ACCENT}; }}")
+
+    def _styleConsoleButton(self) -> None:
+        self.btn_console.setStyleSheet(
+            f"QPushButton {{ border:1px solid {theme.DIVIDER}; padding:6px 10px;"
+            f"text-align:left; font-size:11px; font-weight:600; letter-spacing:1px;"
+            f"color:{theme.NEUTRAL_700}; }}"
+            f"QPushButton:hover {{ background:{theme.NEUTRAL_300}; }}")
 
     def _syncCross(self, index: int, on: bool) -> None:
         button_ = self.cross_buttons[index]
@@ -415,11 +437,8 @@ class LedPanel(QWidget):
         self.btn_console = QPushButton("▸  SÉRIOVÁ KONZOLE")
         self.btn_console.setCheckable(True)
         self.btn_console.setCursor(Qt.PointingHandCursor)
-        self.btn_console.setStyleSheet(
-            f"QPushButton {{ border:1px solid {theme.DIVIDER}; padding:6px 10px;"
-            f"text-align:left; font-size:11px; font-weight:600; letter-spacing:1px;"
-            f"color:{theme.NEUTRAL_700}; }}"
-            f"QPushButton:hover {{ background:{theme.NEUTRAL_300}; }}")
+        self._styleConsoleButton()
+        theme.on_change(self._styleConsoleButton)
         self.btn_console.toggled.connect(self._onConsoleToggled)
         lay.addWidget(self.btn_console)
 

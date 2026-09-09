@@ -83,6 +83,17 @@ z klávesnice a potvrdíte Enterem, nebo ji krokujete šipkami. Hodí se to
 hlavně u expozičního času, kde má posuvník tisíce kroků a trefit se na
 konkrétní číslo tažením je nemožné.
 
+### Světlý a tmavý vzhled
+
+Ikona slunce/měsíce úplně vpravo v horní liště (nebo `Ctrl+D`, případně
+☰ → *Tmavý vzhled*) přepne barvy celé aplikace. Volba se pamatuje, takže
+se program příště rovnou spustí tak, jak jste ho nechal. Tmavý vzhled se
+hodí u mikroskopie v potemnělé místnosti – světlý panel jinak svítí do očí
+a kazí adaptaci zraku na tmu.
+
+Pozor, aby se to nepletlo: sousední tlačítko s měsícem přepíná jen **pozadí
+náhledu** (plochu kolem obrazu), ne vzhled aplikace.
+
 ### Zoom a překryvy
 
 Kolečko myši přibližuje, tažení posouvá, dvojklik vrátí obraz na velikost
@@ -103,6 +114,10 @@ levého panelu. Do jednoho souboru JSON jde všechno najednou:
 * osvětlení – jas a barva každé strany, hlavní jas, natočení modulů,
 * Dark Field – interval, práh, minimální částice, ukládání snímků,
 * snímání – pracovní složka, interval časosběru, kalibrace měřítka.
+
+Karta *Snímání* v levém panelu je záměrně malá: tlačítka **Snímek**,
+**Video**, ikona složky a řádek časosběru. Cesta k pracovní složce je vidět
+ve stavovém řádku dole.
 
 Soubory s nastavením se ukládají do podsložky `nastavení` v pracovní složce
 (sama se založí), takže se nemíchají mezi fotky.

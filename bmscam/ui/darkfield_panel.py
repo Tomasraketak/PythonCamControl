@@ -40,6 +40,7 @@ class TrendChart(QWidget):
         self._values: List[float] = []
         self._lines = []
         self._title = ""
+        theme.on_change(lambda w=self: w.update(), self)
 
     def setSeries(self, times: List[float], values: List[float], title: str) -> None:
         self.setLines([(times, values, theme.ACCENT, "")], title)
@@ -193,7 +194,8 @@ class DarkFieldWindow(QDialog):
             return [(series.values("time_s"), series.values(key),
                      theme.ACCENT, "")]
         return [(series.values("time_s", c), series.values(key, c),
-                 "#{:02x}{:02x}{:02x}".format(*df.CHANNEL_COLORS.get(c, (0, 0, 0))),
+                 ("#{:02x}{:02x}{:02x}".format(*df.CHANNEL_COLORS[c])
+                  if c in df.CHANNEL_COLORS else theme.ACCENT),
                  df.CHANNEL_TITLES.get(c, c)) for c in channels]
 
     def refresh(self) -> None:

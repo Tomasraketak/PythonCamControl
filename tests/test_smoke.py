@@ -1888,6 +1888,71 @@ def test_old_settings_load_without_stacking():
     assert panel.spin_stack.value() == 4
 
 
+def test_dark_mode_repaints_the_whole_window():
+    """Tmavý režim přebarví i prvky s vlastním stylopisem."""
+    from PyQt5.QtWidgets import QApplication
+
+    from bmscam.ui import theme
+    from bmscam.ui.main_window import MainWindow
+
+    app = _app()
+    app.setStyleSheet(theme.stylesheet())
+    win = MainWindow(prefer_demo=True)
+    win.resize(1200, 800)
+    win.show()
+    try:
+        for _ in range(20):
+            app.processEvents()
+        assert theme.mode() == "light"
+        light_bg = theme.BG
+
+        win.setDarkMode(True)
+        for _ in range(20):
+            app.processEvents()
+        assert theme.mode() == "dark"
+        assert theme.BG != light_bg
+        assert "dark" in theme.stylesheet() or theme.BG in theme.stylesheet()
+
+        # plochy se opravdu překreslily – vzorek pixelu z levého panelu
+        image = win.grab().toImage()
+        corner = win.left_panel.mapTo(win, win.left_panel.rect().topLeft())
+        assert image.pixelColor(corner.x() + 6, corner.y() + 6).name() == theme.BG
+
+        # prvky s vlastním stylopisem dostaly nové barvy
+        assert theme.DIVIDER in win.seg_tabs.styleSheet()
+        assert theme.ACCENT in win.led_panel.cross_buttons[0].styleSheet()
+        assert theme.ON_ACCENT in win.led_panel.cross_buttons[0].styleSheet()
+
+        win.setDarkMode(False)
+        for _ in range(10):
+            app.processEvents()
+        assert theme.mode() == "light" and theme.BG == light_bg
+        assert theme.DIVIDER in win.seg_tabs.styleSheet()
+    finally:
+        win.settings.remove("dark_mode")
+        win.close()
+        theme.set_mode("light")
+        app.setStyleSheet(theme.stylesheet())
+
+
+def test_theme_hooks_do_not_keep_widgets_alive():
+    """Registrace překreslení nesmí držet zavřené okno v paměti."""
+    import gc
+
+    from bmscam.ui import theme
+    from bmscam.ui.widgets import SegmentedControl
+
+    _app()
+    theme.refresh()               # zahodí odkazy na widgety z jiných testů
+    before = len(theme._hooks)
+    control = SegmentedControl(["A", "B"])
+    assert len(theme._hooks) > before
+    del control
+    gc.collect()
+    theme.refresh()               # mrtvé odkazy se přitom zahodí
+    assert len(theme._hooks) == before
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

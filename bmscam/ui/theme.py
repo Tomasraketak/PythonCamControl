@@ -5,28 +5,132 @@ dal upravit bez zásahů do jednotlivých oken. Odpovídá předloze
 `CamControl - Redesign.dc.html`.
 """
 
+import weakref
+
 from PyQt5.QtCore import QByteArray, QSize, Qt
 from PyQt5.QtGui import QColor, QFont, QFontDatabase, QIcon, QPainter, QPixmap
 from PyQt5.QtSvg import QSvgRenderer
 
 # ------------------------------------------------------------------- barvy --
-BG = "#f3f2f2"
-SURFACE = "#eae9e9"
-TEXT = "#201e1d"
-ACCENT = "#ec3013"
-ACCENT_600 = "#dd2b0f"
-ACCENT_700 = "#ae1800"
-ACCENT_100 = "#fff2ef"
-DIVIDER = "#8d8b8a"          # #201e1d při 40 % krytí na světlém pozadí
-NEUTRAL_200 = "#eae7e7"
-NEUTRAL_300 = "#d7d3d3"
-NEUTRAL_400 = "#bab6b6"
-NEUTRAL_500 = "#9b9797"
-NEUTRAL_600 = "#7d7979"
-NEUTRAL_700 = "#605d5d"
-NEUTRAL_900 = "#2d2b2b"
-STAGE_DARK = "#141414"
-STAGE_LIGHT = NEUTRAL_200
+#: Dvě palety téhož systému. Světlá je předloha, tmavá z ní vychází –
+#: stejný akcent, obrácené neutrály. Barvy se drží v globálních jménech
+#: modulu, protože z nich staví stylopis i jednotlivé widgety; přepnutí
+#: režimu je tedy přepsání těchto jmen a překreslení (viz set_mode).
+LIGHT = {
+    "BG": "#f3f2f2",
+    "SURFACE": "#eae9e9",
+    "TEXT": "#201e1d",
+    "ACCENT": "#ec3013",
+    "ACCENT_600": "#dd2b0f",
+    "ACCENT_700": "#ae1800",
+    "ACCENT_100": "#fff2ef",
+    "ON_ACCENT": "#f3f2f2",      # text na akcentní ploše
+    "DIVIDER": "#8d8b8a",        # #201e1d při 40 % krytí na světlém pozadí
+    "NEUTRAL_200": "#eae7e7",
+    "NEUTRAL_300": "#d7d3d3",
+    "NEUTRAL_400": "#bab6b6",
+    "NEUTRAL_500": "#9b9797",
+    "NEUTRAL_600": "#7d7979",
+    "NEUTRAL_700": "#605d5d",
+    "NEUTRAL_900": "#2d2b2b",
+    "STAGE_DARK": "#141414",
+    "STAGE_LIGHT": "#eae7e7",
+    "TOOLTIP_BG": "#2d2b2b",
+    "TOOLTIP_TEXT": "#f3f2f2",
+}
+
+DARK = {
+    "BG": "#181716",
+    "SURFACE": "#221f1e",
+    "TEXT": "#f2efed",
+    "ACCENT": "#ec3013",
+    "ACCENT_600": "#f5492e",     # na tmavém pozadí musí hover zesvětlit
+    "ACCENT_700": "#ff6448",
+    "ACCENT_100": "#3a1710",
+    "ON_ACCENT": "#ffffff",
+    "DIVIDER": "#565150",
+    "NEUTRAL_200": "#2b2827",
+    "NEUTRAL_300": "#35312f",
+    "NEUTRAL_400": "#4d4846",
+    "NEUTRAL_500": "#807a78",
+    "NEUTRAL_600": "#a49d9a",
+    "NEUTRAL_700": "#c6bfbc",
+    "NEUTRAL_900": "#ece8e6",
+    "STAGE_DARK": "#0d0c0c",
+    "STAGE_LIGHT": "#2b2827",
+    "TOOLTIP_BG": "#ece8e6",
+    "TOOLTIP_TEXT": "#181716",
+}
+
+_icon_cache: dict = {}
+
+MODES = {"light": LIGHT, "dark": DARK}
+_mode = "light"
+
+globals().update(LIGHT)
+
+
+def mode() -> str:
+    """Název právě použité palety („light“ / „dark“)."""
+    return _mode
+
+
+def set_mode(name: str) -> bool:
+    """Přepne paletu. Vrací True, když se něco změnilo.
+
+    Samotné přebarvení okna má na starost :func:`refresh` a nový
+    :func:`stylesheet` – tahle funkce jen vymění hodnoty barev."""
+    global _mode
+    if name not in MODES or name == _mode:
+        return False
+    _mode = name
+    globals().update(MODES[name])
+    _icon_cache.clear()          # ikony se kreslí v barvě textu
+    return True
+
+
+# Widgety, které mají vlastní stylopis (nejde je popsat globálním QSS),
+# se sem přihlásí a po přepnutí palety se překreslí. Odkaz je slabý, aby
+# zavřené okno nedrželo v paměti nic navíc.
+_hooks: list = []
+
+
+def on_change(callback, owner=None) -> None:
+    """Zaregistruje překreslení widgetu po změně palety.
+
+    U vázané metody stačí ona sama – drží se slabým odkazem, takže
+    zavřené okno nic v paměti nedrží. U volné funkce (typicky lambda nad
+    widgetem) předejte `owner`: hlídá se jeho životnost, protože na
+    samotnou lambdu už nikdo jiný neodkazuje."""
+    if owner is not None:
+        _hooks.append((weakref.ref(owner), callback))
+        return
+    if hasattr(callback, "__self__"):
+        try:
+            _hooks.append((None, weakref.WeakMethod(callback)))
+            return
+        except TypeError:                # vestavěná metoda Qt (např. update)
+            _hooks.append((weakref.ref(callback.__self__), callback))
+            return
+    _hooks.append((None, callback))
+
+
+def refresh() -> None:
+    """Zavolá všechna registrovaná překreslení; mrtvé odkazy zahodí."""
+    alive = []
+    for owner_ref, entry in list(_hooks):
+        if owner_ref is not None and owner_ref() is None:
+            continue                     # widget mezitím zanikl
+        callback = entry() if isinstance(entry, weakref.WeakMethod) else entry
+        if callback is None:
+            continue
+        alive.append((owner_ref, entry))
+        try:
+            callback()
+        except RuntimeError:             # widget už v Qt neexistuje
+            alive.pop()
+    _hooks[:] = alive
+
 
 # --------------------------------------------------------------- rozestupy --
 SPACE_1, SPACE_2, SPACE_3, SPACE_4, SPACE_6 = 4, 8, 12, 16, 24
@@ -90,11 +194,10 @@ _ICONS = {
     "focus": "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3",
 }
 
-_icon_cache = {}
 
-
-def icon(name: str, color: str = TEXT, size: int = 16) -> QIcon:
+def icon(name: str, color: str = "", size: int = 16) -> QIcon:
     """Vrátí ikonu vykreslenou z SVG cesty v zadané barvě."""
+    color = color or TEXT
     key = (name, color, size)
     if key in _icon_cache:
         return _icon_cache[key]
@@ -146,10 +249,10 @@ QPushButton {{
     padding: 7px 11px; font-weight: 700; font-size: 13px;
 }}
 QPushButton:disabled {{ color: {NEUTRAL_500}; }}
-QPushButton[variant="primary"] {{ background: {ACCENT}; color: {BG}; }}
+QPushButton[variant="primary"] {{ background: {ACCENT}; color: {ON_ACCENT}; }}
 QPushButton[variant="primary"]:hover {{ background: {ACCENT_600}; }}
 QPushButton[variant="primary"]:pressed {{ background: {ACCENT_700}; }}
-QPushButton[variant="primary"]:disabled {{ background: {NEUTRAL_400}; color: {BG}; }}
+QPushButton[variant="primary"]:disabled {{ background: {NEUTRAL_400}; color: {ON_ACCENT}; }}
 QPushButton[variant="secondary"] {{ border-color: {DIVIDER}; }}
 QPushButton[variant="secondary"]:hover {{ background: {NEUTRAL_300}; }}
 QPushButton[variant="secondary"]:pressed {{ background: {NEUTRAL_400}; }}
@@ -169,7 +272,7 @@ QToolButton:hover {{ background: {NEUTRAL_300}; }}
 QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox {{
     background: {SURFACE}; border: 1px solid {DIVIDER}; border-radius: 0;
     padding: 5px 8px; min-height: 22px; selection-background-color: {ACCENT};
-    selection-color: {BG};
+    selection-color: {ON_ACCENT};
 }}
 QComboBox:hover, QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover {{
     border-color: {NEUTRAL_900};
@@ -183,7 +286,11 @@ QComboBox:disabled, QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabl
 QComboBox::drop-down {{ border: none; width: 20px; }}
 QComboBox QAbstractItemView {{
     background: {BG}; border: 1px solid {DIVIDER};
-    selection-background-color: {ACCENT}; selection-color: {BG}; outline: none;
+    selection-background-color: {ACCENT}; selection-color: {ON_ACCENT}; outline: none;
+}}
+/* Úzká pole vedle posuvníků – bez odsazení by se do nich nevešlo „255". */
+QSpinBox[role="inline"], QDoubleSpinBox[role="inline"] {{
+    padding: 2px 3px; min-height: 20px;
 }}
 /* Pole s hodnotou vlastnosti: rámeček dává najevo, že se do něj dá psát. */
 QSpinBox[role="value"], QDoubleSpinBox[role="value"] {{
@@ -239,9 +346,41 @@ QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 QScrollBar:horizontal {{ background: transparent; height: 10px; }}
 QScrollBar::handle:horizontal {{ background: {NEUTRAL_400}; min-width: 30px; }}
 
+/* ----------------------------------------------------- dialogy a průběh -- */
+QDialogButtonBox QPushButton, QMessageBox QPushButton {{
+    border: 1px solid {DIVIDER}; padding: 6px 14px; min-width: 72px;
+}}
+QDialogButtonBox QPushButton:hover, QMessageBox QPushButton:hover {{
+    background: {NEUTRAL_300};
+}}
+QDialogButtonBox QPushButton:default, QMessageBox QPushButton:default {{
+    border-color: {ACCENT};
+}}
+QProgressBar {{
+    background: {SURFACE}; border: 1px solid {DIVIDER}; border-radius: 0;
+    min-height: 16px; text-align: center; color: {TEXT};
+}}
+QProgressBar::chunk {{ background: {ACCENT}; }}
+
+/* ------------------------------------------------------------------ tabulky */
+QTableWidget, QTableView {{
+    background: {BG}; alternate-background-color: {SURFACE};
+    gridline-color: {DIVIDER}; color: {TEXT};
+    selection-background-color: {ACCENT}; selection-color: {ON_ACCENT};
+    border: 1px solid {DIVIDER};
+}}
+QHeaderView {{ background: {SURFACE}; }}
+QHeaderView::section {{
+    background: {SURFACE}; color: {NEUTRAL_700}; border: none;
+    border-bottom: 1px solid {DIVIDER}; border-right: 1px solid {DIVIDER};
+    padding: 4px 6px; font-size: 11px; font-weight: 700;
+}}
+QTableCornerButton::section {{ background: {SURFACE}; border: none; }}
+QSplitter::handle {{ background: {DIVIDER}; }}
+
 QMenu {{ background: {BG}; border: 1px solid {DIVIDER}; padding: 4px; }}
 QMenu::item {{ padding: 6px 24px 6px 12px; }}
-QMenu::item:selected {{ background: {ACCENT}; color: {BG}; }}
+QMenu::item:selected {{ background: {ACCENT}; color: {ON_ACCENT}; }}
 QMenu::separator {{ height: 1px; background: {DIVIDER}; margin: 4px 8px; }}
 
 QPlainTextEdit {{
@@ -250,6 +389,6 @@ QPlainTextEdit {{
     color: {NEUTRAL_700};
 }}
 QToolTip {{
-    background: {NEUTRAL_900}; color: {BG}; border: none; padding: 5px 8px;
+    background: {TOOLTIP_BG}; color: {TOOLTIP_TEXT}; border: none; padding: 5px 8px;
 }}
 """

@@ -54,6 +54,9 @@ Zdrojový návrh je v [docs/design](docs/design/).
   Hodnotu jde napsat z klávesnice a potvrdit Enterem, nebo krokovat šipkami;
   posuvník a pole se drží spolu. U expozičního času tak jde nastavit přesné
   číslo, na které by se posuvníkem trefovalo těžko.
+* **Světlý a tmavý vzhled** – `Ctrl+D` nebo ikona v horní liště; obě palety
+  vycházejí ze stejného návrhového systému a volba se pamatuje mezi
+  spuštěními. Widgety s vlastním stylopisem se překreslují za běhu.
 * **Barevně / černobíle** – přepínač v horní liště přepíná kameru mezi
   barevným a monochromatickým obrazem (vlastnost `chrome` v SDK). Pro temné
   pole a měření po kanálech je čistší černobílý režim; barevná nastavení se

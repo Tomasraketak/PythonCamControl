@@ -30,7 +30,7 @@ from .darkfield_worker import DarkFieldRunner
 from .led_panel import LedPanel
 from .video_view import VideoView
 from .widgets import (Card, SegmentedControl, SidePanel, Tag, button, hline,
-                      icon_button, label, row, vline)
+                      icon_button, label, row, set_icon, vline)
 
 APP_NAME = "BMS Cam Control"
 DARKFIELD_TITLE = "Dark"
@@ -77,6 +77,14 @@ class MainWindow(QMainWindow):
 
         self.save_dir = self.settings.value("save_dir",
                                             workspace.default_save_dir())
+
+        # Uložený vzhled se použije ještě před stavbou oken, aby widgety
+        # rovnou vznikly ve správných barvách a nemusely se přebarvovat.
+        if str(self.settings.value("dark_mode", "false")).lower() in ("true", "1"):
+            theme.set_mode("dark")
+            app = QApplication.instance()
+            if app is not None:
+                app.setStyleSheet(theme.stylesheet())
 
         self._buildActions()
         self._buildUi()
@@ -156,6 +164,8 @@ class MainWindow(QMainWindow):
         self.act_checkexpo = act("Kontrola stálosti expozice…", self.checkExposure)
         self.act_shortcuts = act("Klávesové zkratky…", self.showShortcuts, "F1")
         self.act_about = act("O aplikaci…", self.showAbout)
+        self.act_dark = act("Tmavý vzhled", self.toggleDarkMode, "Ctrl+D", True)
+        self.act_dark.setChecked(theme.mode() == "dark")
         self.act_quit = act("Konec", self.close, "Ctrl+Q")
 
     # ================================================================== UI ===
@@ -210,6 +220,8 @@ class MainWindow(QMainWindow):
         sep = QWidget()
         sep.setFixedWidth(2)
         sep.setStyleSheet(f"background: {theme.DIVIDER};")
+        theme.on_change(
+            lambda w=sep: w.setStyleSheet(f"background: {theme.DIVIDER};"), sep)
         return sep
 
     # ------------------------------------------------------------ horní lišta
@@ -253,6 +265,8 @@ class MainWindow(QMainWindow):
                        self.act_leds, self.act_fullscreen):
             menu.addAction(action)
         menu.addSeparator()
+        menu.addSeparator()
+        menu.addAction(self.act_dark)
         for action in (self.act_checkexpo, self.act_diag, self.act_shortcuts, self.act_about,
                        self.act_quit):
             menu.addAction(action)
@@ -311,7 +325,20 @@ class MainWindow(QMainWindow):
         self.btn_stage = icon_button("moon", "Světlé pozadí náhledu", checkable=True)
         self.btn_stage.toggled.connect(self._onStageLight)
         lay.addWidget(self.btn_stage)
+
+        self.btn_dark = icon_button("sun" if theme.mode() == "dark" else "moon",
+                                    "", checkable=False)
+        self.btn_dark.clicked.connect(self.toggleDarkMode)
+        self._updateDarkButton()
+        lay.addWidget(self.btn_dark)
         return bar
+
+    def _updateDarkButton(self) -> None:
+        dark = theme.mode() == "dark"
+        set_icon(self.btn_dark, "sun" if dark else "moon")
+        self.btn_dark.setToolTip(
+            ("Světlý vzhled aplikace (Ctrl+D)" if dark
+             else "Tmavý vzhled aplikace (Ctrl+D)"))
 
     # ------------------------------------------------------------ levý panel -
     def _fillLeftPanel(self) -> None:
@@ -393,12 +420,20 @@ class MainWindow(QMainWindow):
         panel.add(self.tabs, 1)
         panel.add(hline())
 
+        # Snímání zabíralo pět řádků, přestože se používá zřídka: dva
+        # popisky odsud jsou i ve stavovém řádku a složka se mění výjimečně.
+        # Zůstal jeden řádek tlačítek plus časosběr.
         capture = Card("Snímání")
-        self.btn_snap = button("Uložit snímek", "primary", "camera")
+        capture.layout().setContentsMargins(theme.SPACE_3, theme.SPACE_2,
+                                            theme.SPACE_3, theme.SPACE_2)
+        capture.layout().setSpacing(theme.SPACE_1)
+        self.btn_snap = button("Snímek", "primary", "camera")
         self.btn_snap.clicked.connect(lambda: self.snapshot())
-        self.btn_record = button("Nahrát video", "secondary", "video")
+        self.btn_record = button("Video", "secondary", "video")
         self.btn_record.clicked.connect(self.toggleRecord)
-        capture.add(row((self.btn_snap, 1), (self.btn_record, 1)))
+        btn_dir = icon_button("folder", "Změnit složku pro ukládání…", size=30)
+        btn_dir.clicked.connect(self.chooseSaveDir)
+        capture.add(row((self.btn_snap, 2), (self.btn_record, 2), btn_dir))
 
         self.btn_timelapse = button("Časosběr", "secondary", "timer")
         self.btn_timelapse.setCheckable(True)
@@ -408,15 +443,13 @@ class MainWindow(QMainWindow):
         self.spin_interval.setValue(int(self.settings.value("timelapse_interval", 10)))
         self.spin_interval.setFixedWidth(62)
         self.spin_interval.setAlignment(Qt.AlignCenter)
+        self.spin_interval.setToolTip("Interval časosběru v sekundách")
         capture.add(row((self.btn_timelapse, 1), self.spin_interval,
-                        label("s / snímek", "meta")))
+                        label("s", "meta")))
 
+        # Popisek složky zůstává jen ve stavovém řádku dole; tady byl podruhé.
         self.lbl_dir = label("", "meta")
-        self.lbl_dir.setWordWrap(True)
-        capture.add(self.lbl_dir)
-        btn_dir = button("Změnit složku pro ukládání…", "ghost", "folder")
-        btn_dir.clicked.connect(self.chooseSaveDir)
-        capture.add(btn_dir)
+        self.lbl_dir.setVisible(False)
         panel.add(capture)
         self._updateDirLabel()
 
@@ -455,8 +488,14 @@ class MainWindow(QMainWindow):
     def refreshDevices(self) -> None:
         self.devices = enumerate_devices(include_demo=self._include_demo)
         self.cmb_device.clear()
-        for dev in self.devices:
-            self.cmb_device.addItem(str(dev))
+        # Název bývá delší než panel; QComboBox by ho jen uřízl, proto se
+        # zkracuje s výpustkou a celý zůstává v tooltipu.
+        metrics = self.cmb_device.fontMetrics()
+        width = max(120, self.cmb_device.width() - 34)
+        for index, dev in enumerate(self.devices):
+            text = str(dev)
+            self.cmb_device.addItem(metrics.elidedText(text, Qt.ElideRight, width))
+            self.cmb_device.setItemData(index, text, Qt.ToolTipRole)
         if not self.devices:
             self.cmb_device.addItem("— žádná kamera nenalezena —")
         elif self._prefer_demo:
@@ -1794,9 +1833,28 @@ class MainWindow(QMainWindow):
         self.view.show_scale = self.act_scale.isChecked()
         self.view.update()
 
+    def toggleDarkMode(self) -> None:
+        """Přepne světlý a tmavý vzhled aplikace."""
+        self.setDarkMode(theme.mode() != "dark")
+
+    def setDarkMode(self, dark: bool) -> None:
+        if not theme.set_mode("dark" if dark else "light"):
+            return
+        app = QApplication.instance()
+        if app is not None:
+            app.setStyleSheet(theme.stylesheet())
+        theme.refresh()              # widgety s vlastním stylopisem
+        self._updateDarkButton()
+        if self.act_dark.isChecked() != dark:
+            self.act_dark.blockSignals(True)
+            self.act_dark.setChecked(dark)
+            self.act_dark.blockSignals(False)
+        self.settings.setValue("dark_mode", dark)
+        self.view.update()
+        self.statusMessage("Vzhled: " + ("tmavý" if dark else "světlý"), 3000)
+
     def _onStageLight(self, light: bool) -> None:
         self.view.set_light_stage(light)
-        from .widgets import set_icon
         set_icon(self.btn_stage, "sun" if light else "moon")
         self.btn_stage.setToolTip("Tmavé pozadí náhledu" if light
                                   else "Světlé pozadí náhledu")
@@ -2000,6 +2058,7 @@ class ShortcutDialog(QDialog):
         ("Přiblížit / oddálit", "Ctrl + / Ctrl −"),
         ("Mřížka / kříž / měřítko", "G / K / M"),
         ("Panel osvětlení", "Ctrl+L"),
+        ("Světlý / tmavý vzhled", "Ctrl+D"),
         ("Celá obrazovka", "F11"),
         ("Ukončit", "Ctrl+Q"),
     ]
