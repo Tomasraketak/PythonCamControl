@@ -251,11 +251,11 @@ class SidePanel(QWidget):
         set_icon(self.toggle_button, opposite[self.toggle_button._icon_name])
         self.toggle_button.setToolTip("Rozbalit panel" if collapsed else "Sbalit panel")
 
-    def add(self, widget) -> None:
+    def add(self, widget, stretch: int = 0) -> None:
         if isinstance(widget, QWidget):
-            self.body_layout.addWidget(widget)
+            self.body_layout.addWidget(widget, stretch)
         else:
-            self.body_layout.addLayout(widget)
+            self.body_layout.addLayout(widget, stretch)
 
 
 # ------------------------------------------------------------------ řádky ----

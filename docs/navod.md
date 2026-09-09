@@ -98,7 +98,8 @@ Bez toho nedostanete plochu v µm² ani v měření kontaminace.
 Až budete s nastavením spokojení, uložte si ho: **Uložit vše…** v horní části
 levého panelu. Do jednoho souboru JSON jde všechno najednou:
 
-* kamera – expozice, barvy, obraz, ostření, rozlišení i kodek,
+* kamera – expozice, barvy, obraz, ostření, rozlišení i kodek (ten se
+  v panelu nezobrazuje, ale ukládá a načítá se dál),
 * osvětlení – jas a barva každé strany, hlavní jas, natočení modulů,
 * Dark Field – interval, práh, minimální částice, ukládání snímků,
 * snímání – pracovní složka, interval časosběru, kalibrace měřítka.
@@ -191,8 +192,12 @@ je jen shrnutí kroků:
    Reference se navíc **uloží sama** do podsložky `reference` v pracovní
    složce – vedle `.npz` vznikne i JSON s popisem podmínek (expozice, zisk,
    osvětlení, práh), aby bylo za měsíc jasné, k čemu patří.
-3. Vyměňte sklíčko za měřené, nastavte **interval** (výchozí 1 s) a dejte
+3. Vyměňte sklíčko za měřené, nastavte **interval** (výchozí 5 s) a dejte
    **Spustit měření**.
+   Každé měření vzniká z **průměru pěti snímků** – pořídí se jeden za
+   sekundu a měří se až z jejich průměru, který se také ukládá jako PNG.
+   Šum senzoru tím klesne na 45 %, takže se nad práh dostane i slabý film.
+   Počet snímků i interval se dají změnit; hodnota 1 průměrování vypne.
 4. Průběh sledujte v **Tabulka a graf…**. Po **Zastavit měření** se tabulka
    uloží do CSV sama (ke snímkům toho běhu, jinak do pracovní složky); cesta
    se vypíše do stavového řádku. Tlačítko **CSV…** zůstává pro uložení jinam.

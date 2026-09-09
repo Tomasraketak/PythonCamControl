@@ -65,6 +65,9 @@ Zdrojový návrh je v [docs/design](docs/design/).
   Soubor se dá přiložit k naměřeným datům, takže je za měsíc jasné, za jakých
   podmínek vznikla. Starší profily, které měly jen vlastnosti kamery, se načtou
   taky. Soubory leží v podsložce `nastavení` uvnitř pracovní složky.
+* **Průměrování snímků** – jedno měření temného pole vzniká z průměru
+  několika snímků (výchozích pět za pět sekund); ukládá se a vyhodnocuje
+  jen ten zprůměrovaný PNG, čímž šum senzoru klesne na 45 %.
 * **Nic se neztratí** – zastavení měření uloží tabulku do CSV samo a nové
   spuštění začne s čistým grafem; snímky, na které rozbor nestačí, čekají ve
   frontě a dopočítají se (zbytek po zastavení měření), místo aby se zahazovaly; pořízená reference se ukládá automaticky

@@ -66,6 +66,8 @@ class MainWindow(QMainWindow):
         self._timelapse_dir: Optional[str] = None
         self._df_pending = False          # čeká se na snímek k rozboru
         self._df_store = None             # složka se snímky pro zpětný rozbor
+        self._df_stack_left = 0           # kolik dílčích snímků do průměru zbývá
+        self._df_stack_last = 0.0         # čas posledního dílčího snímku
         self._df_last_bias_frame = 0.0    # kdy naposled šel snímek do reference
         self._mc_queue: List[str] = []    # kanály, které v cyklu ještě zbývají
         self._mc_channel = ""             # kanál, který se právě snímá
@@ -93,6 +95,7 @@ class MainWindow(QMainWindow):
         self.df_runner = DarkFieldRunner(self)
         self.df_runner.sampleReady.connect(self._onDarkFieldSample)
         self.df_runner.biasProgress.connect(self.df_panel.setBiasProgress)
+        self.df_runner.stackProgress.connect(self.df_panel.setStackProgress)
         self.df_runner.biasReady.connect(self._onBiasReady)
         self.df_runner.failed.connect(self._onDarkFieldFailed)
 
@@ -351,11 +354,16 @@ class MainWindow(QMainWindow):
         self.cmb_res.setMinimumContentsLength(10)
         self.cmb_res.currentIndexChanged.connect(self._onResolutionChanged)
         card.add(row(label("Rozlišení", "meta"), None, (self.cmb_res, 3)))
+        # Kodek se v panelu nezobrazuje – nastavuje se jednou za život a
+        # zabíral místo, které je potřeba pro rozbor temného pole. Volba
+        # zůstává v paměti aplikace, takže se pořád ukládá i načítá.
         self.cmb_codec = QComboBox()
+        self.cmb_codec.setVisible(False)
         self.cmb_codec.currentIndexChanged.connect(self._onCodecChanged)
-        card.add(row(label("Kodek", "meta"), None, (self.cmb_codec, 3)))
+        # Údaje o kameře na jeden řádek; celé znění je v tooltipu. Tři
+        # řádky tady chyběly dole u rozboru temného pole.
         self.lbl_info = label("–", "meta")
-        self.lbl_info.setWordWrap(True)
+        self.lbl_info.setWordWrap(False)
         card.add(self.lbl_info)
         panel.add(card)
 
@@ -376,9 +384,13 @@ class MainWindow(QMainWindow):
         self.df_scroll = QScrollArea()
         self.df_scroll.setWidgetResizable(True)
         self.df_scroll.setFrameShape(QScrollArea.NoFrame)
+        self.df_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.df_scroll.setWidget(self.df_panel)
         self.tabs.addWidget(self.df_scroll)
-        panel.add(self.tabs)
+        # Rozbor temného pole má nejvíc ovládání, takže volné místo v panelu
+        # dostane přednostně tahle část – ať se v ní nemusí tolik scrollovat.
+        self.tabs.setMinimumHeight(380)
+        panel.add(self.tabs, 1)
         panel.add(hline())
 
         capture = Card("Snímání")
@@ -643,7 +655,11 @@ class MainWindow(QMainWindow):
         """Krátký řádek s údaji o kameře – bez opakování jejího názvu."""
         info = dict(self.camera.info()) if self.camera else {}
         info.pop("Kamera", None)
-        self.lbl_info.setText(" · ".join(f"{k} {v}" for k, v in info.items()) or "–")
+        text = " · ".join(f"{k} {v}" for k, v in info.items()) or "–"
+        self.lbl_info.setToolTip(text)
+        metrics = self.lbl_info.fontMetrics()
+        self.lbl_info.setText(metrics.elidedText(
+            text, Qt.ElideRight, max(120, self.lbl_info.width() or 240)))
 
     # ============================================================== stream ===
     def _sdkCallback(self, event: int) -> None:
@@ -819,7 +835,7 @@ class MainWindow(QMainWindow):
             self._df_last_bias_frame = 0.0
             self.df_runner.startBias(self._bias_frames)
         else:
-            self._df_pending = True
+            self._armStack()
 
     def _finishChannelCycle(self) -> None:
         """Vrátí expozici, ostření i barvu osvětlení do původního stavu."""
@@ -881,6 +897,8 @@ class MainWindow(QMainWindow):
         else:
             self.df_timer.stop()
             self._df_pending = False
+            self._df_stack_left = 0
+            self.df_runner.cancelStack()
             if self._mc_mode:
                 self._mc_queue = []
                 self._finishChannelCycle()
@@ -1022,12 +1040,27 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, APP_NAME,
                                         "Není k dispozici žádný obraz.")
             return
+        if self._df_stack_left:
+            return              # předchozí dávka se ještě sbírá, tenhle tik vynecháme
         if self.df_panel.isMultichannel():
             if self._mc_mode:
                 return          # předchozí cyklus ještě běží, tenhle vynecháme
             self._startChannelCycle("measure")
             return
+        self._armStack()
+
+    def _armStack(self) -> None:
+        """Otevře novou dávku dílčích snímků pro jedno měření."""
+        self._df_stack_left = max(1, self.df_panel.stackFrames())
+        self._df_stack_last = 0.0
         self._df_pending = True
+
+    def _stackStep(self) -> float:
+        """Rozestup dílčích snímků – interval rozdělený mezi ně."""
+        count = max(1, self.df_panel.stackFrames())
+        if count <= 1:
+            return 0.0
+        return max(0.05, self.df_panel.spin_interval.value() / count)
 
     def _darkFieldFrame(self, frame) -> None:
         """Předá snímek k rozboru do vlákna.
@@ -1049,6 +1082,12 @@ class MainWindow(QMainWindow):
             self._df_last_bias_frame = now
         elif not self._df_pending:
             return
+        else:
+            # Dílčí snímky se sbírají po celý interval, ne co nejrychleji –
+            # jinak by průměr popsal jediný okamžik místo celého intervalu.
+            step = self._stackStep()
+            if step and time.time() - self._df_stack_last < step:
+                return
 
         try:
             gray = darkfield.to_gray_u8(
@@ -1067,7 +1106,9 @@ class MainWindow(QMainWindow):
         if self.df_runner.submit(gray, bias, settings, datetime.now(), store,
                                  self._mc_channel):
             if not collecting:
-                self._df_pending = False
+                self._df_stack_last = time.time()
+                self._df_stack_left = max(0, self._df_stack_left - 1)
+                self._df_pending = self._df_stack_left > 0
 
     def reanalyzeDarkField(self) -> None:
         """Spočítá měření znovu ze snímků uložených na disku."""

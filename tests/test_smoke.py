@@ -1137,10 +1137,13 @@ def test_darkfield_worker_runs_off_the_gui_thread():
         bias = df.Bias(np.zeros((60, 80), np.float32), 1)
         gray = np.zeros((60, 80), np.uint8)
         gray[20:26, 30:36] = 180
-        assert runner.submit(gray, bias, df.Settings(sigma=4.0, min_area_px=2),
+        assert runner.submit(gray, bias,
+                             df.Settings(sigma=4.0, min_area_px=2,
+                                         stack_frames=1),
                              datetime.now())
         # druhý snímek počká ve frontě, nezahodí se
-        assert runner.submit(gray, bias, df.Settings(), datetime.now())
+        assert runner.submit(gray, bias, df.Settings(stack_frames=1),
+                             datetime.now())
 
         deadline = _time.time() + 10.0
         while _time.time() < deadline and len(results) < 2:
@@ -1167,8 +1170,10 @@ def test_darkfield_panel_offers_reanalysis_and_frame_storage():
     _app()
     panel = DarkFieldPanel()
     try:
-        # Výchozí interval je 1 s, jak si uživatel přál.
-        assert panel.spin_interval.value() == 1.0
+        # Výchozí interval je 5 s a měření vzniká z průměru pěti snímků.
+        assert panel.spin_interval.value() == 5.0
+        assert panel.spin_stack.value() == 5
+        assert panel.settings().stack_frames == 5
         assert panel.wantsStoredFrames()
         assert panel.settings().store_frames
 
@@ -1631,7 +1636,7 @@ def test_runner_queues_frames_instead_of_dropping_them():
         runner.sampleReady.connect(lambda m, w: got.append(m))
         gray = np.zeros((64, 64), "uint8")
         gray[10:14, 10:14] = 200
-        settings = df.Settings()
+        settings = df.Settings(stack_frames=1)
         for _ in range(5):
             assert runner.submit(gray.copy(), None, settings, None)
         assert runner.pending > 1, "fronta se vůbec nenaplnila"
@@ -1673,7 +1678,7 @@ def test_stopping_measurement_finishes_the_backlog():
     try:
         win.save_dir = folder
         gray = np.zeros((64, 64), "uint8")
-        settings = df.Settings()
+        settings = df.Settings(stack_frames=1)
         for _ in range(4):
             win.df_runner.submit(gray.copy(), None, settings, None)
         assert win.df_runner.pending > 1
@@ -1788,6 +1793,99 @@ def test_camera_switches_between_color_and_mono():
         assert win.camera.get("chrome") == 0
     finally:
         win.close()
+
+
+def test_frame_stacker_averages_and_cuts_noise():
+    """Průměr snímků potlačí šum a respektuje kanál i rozlišení."""
+    import numpy as np
+
+    from bmscam import darkfield as df
+
+    rng = np.random.default_rng(11)
+    base = np.full((60, 80), 100.0)
+    stacker = df.FrameStacker(5)
+    single = None
+    for index in range(5):
+        noisy = np.clip(base + rng.normal(0, 12, base.shape), 0, 255).astype("uint8")
+        if single is None:
+            single = noisy
+        done = stacker.add(noisy, None, "")
+        assert done == (index == 4)
+    average = stacker.result()
+    assert average.dtype == np.uint8
+    assert abs(float(average.mean()) - 100.0) < 1.5
+    # šum klesne zhruba na 1/sqrt(5); s rezervou stačí ověřit, že klesl
+    assert average.std() < single.std() * 0.7
+
+    # jiný kanál nebo rozlišení rozdělanou dávku zahodí
+    stacker = df.FrameStacker(3)
+    stacker.add(np.zeros((10, 10), "uint8"), None, "red")
+    stacker.add(np.zeros((10, 10), "uint8"), None, "green")
+    assert stacker.taken == 1 and stacker.channel == "green"
+    stacker.add(np.zeros((12, 12), "uint8"), None, "green")
+    assert stacker.taken == 1
+
+
+def test_measurement_stacks_frames_into_one_png():
+    """Z pěti dílčích snímků vznikne jedno měření a jeden uložený PNG."""
+    import shutil
+    import tempfile
+    import time as _time
+
+    import numpy as np
+
+    from bmscam import darkfield as df
+    from bmscam.ui.darkfield_worker import DarkFieldRunner
+
+    app = _app()
+    folder = tempfile.mkdtemp()
+    runner = DarkFieldRunner()
+    try:
+        samples, progress = [], []
+        runner.sampleReady.connect(lambda m, w: samples.append(m))
+        runner.stackProgress.connect(lambda t, c: progress.append((t, c)))
+
+        store = df.FrameStore(folder)
+        settings = df.Settings(stack_frames=5)
+        gray = np.full((40, 50), 100, "uint8")
+        for _ in range(5):
+            assert runner.submit(gray.copy(), None, settings, None, store)
+
+        deadline = _time.time() + 10.0
+        while _time.time() < deadline and not samples:
+            app.processEvents()
+            _time.sleep(0.01)
+        assert len(samples) == 1, samples
+        assert progress[0] == (1, 5) and progress[-1] == (5, 5)
+
+        # na disku je jediný snímek – ten zprůměrovaný
+        paths = df.FrameStore.list_frames(folder)
+        assert len(paths) == 1, paths
+        assert paths[0].endswith(".png") or paths[0].endswith(".npz")
+        stored = df.FrameStore.load_frame(paths[0])
+        assert stored.shape == gray.shape
+        assert abs(float(stored.mean()) - 100.0) < 1.0
+    finally:
+        runner.shutdown()
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def test_old_settings_load_without_stacking():
+    """Soubor ze starší verze se načte se stejným chováním jako tehdy."""
+    from bmscam.ui.darkfield_panel import DarkFieldPanel
+
+    _app()
+    panel = DarkFieldPanel()
+    # starší verze průměrování neznala – interval znamenal jeden snímek
+    panel.applySettings({"interval_s": 1.0, "threshold_mode": "sigma",
+                         "sigma": 5.0, "min_area_px": 2})
+    assert panel.spin_interval.value() == 1.0
+    assert panel.spin_stack.value() == 1
+    assert panel.settings().stack_frames == 1
+
+    # dnešní soubor si počet snímků nese s sebou
+    panel.applySettings({"interval_s": 5.0, "stack_frames": 4})
+    assert panel.spin_stack.value() == 4
 
 
 if __name__ == "__main__":

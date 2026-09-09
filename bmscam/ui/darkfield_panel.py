@@ -379,14 +379,32 @@ class DarkFieldPanel(QWidget):
         self.spin_interval = QDoubleSpinBox()
         self.spin_interval.setRange(0.2, 3600.0)
         self.spin_interval.setDecimals(1)
-        self.spin_interval.setValue(1.0)
+        self.spin_interval.setValue(5.0)
         self.spin_interval.setSuffix(" s")
         self.spin_interval.setFixedWidth(84)
         self.spin_interval.setToolTip(
-            "Jak často se měří. Rozbor 4K snímku trvá desetiny sekundy, "
-            "takže krátký interval zbytečně zatěžuje počítač – "
-            "kontaminace roste v minutách, ne v milisekundách.")
+            "Jak často vzniká jedno měření. Během intervalu se pořídí "
+            "několik snímků, které se zprůměrují – měří se až z průměru.")
+        self.spin_interval.valueChanged.connect(self._updateStackInfo)
         card.add(row(label("Interval", "meta"), None, self.spin_interval))
+
+        self.spin_stack = QSpinBox()
+        self.spin_stack.setRange(1, 60)
+        self.spin_stack.setValue(5)
+        self.spin_stack.setSuffix(" snímků")
+        self.spin_stack.setKeyboardTracking(False)
+        self.spin_stack.setFixedWidth(96)
+        self.spin_stack.setToolTip(
+            "Kolik snímků se zprůměruje do jednoho měření.\n"
+            "Šum senzoru je mezi snímky nezávislý, takže průměr z pěti "
+            "snímků ho potlačí na 45 %.\n"
+            "Na disk i do rozboru jde jen ten zprůměrovaný snímek.\n"
+            "Hodnota 1 = průměrování vypnuté.")
+        self.spin_stack.valueChanged.connect(self._updateStackInfo)
+        card.add(row(label("Průměrovat", "meta"), None, self.spin_stack))
+        self.lbl_stack = label("", "meta")
+        self.lbl_stack.setWordWrap(True)
+        card.add(self.lbl_stack)
 
         self.chk_store = QCheckBox("Ukládat snímky pro zpětný rozbor")
         self.chk_store.setChecked(True)
@@ -446,6 +464,7 @@ class DarkFieldPanel(QWidget):
 
         lay.addStretch(1)
         self._onModeChanged(0)
+        self._updateStackInfo()
 
     # -------------------------------------------------------------- stav ---
     def _onModeChanged(self, index: int) -> None:
@@ -497,6 +516,7 @@ class DarkFieldPanel(QWidget):
             bias_frames=self.spin_bias_frames.value(),
             um_per_px=getattr(self, "_um_per_px", 0.0),
             store_frames=self.chk_store.isChecked(),
+            stack_frames=self.spin_stack.value(),
             queue_mb=self.spin_queue.value(),
             multichannel=self.chk_multi.isChecked(),
             settle_ms=int(self.spin_settle.value() * 1000),
@@ -527,6 +547,26 @@ class DarkFieldPanel(QWidget):
                                .format(os.path.basename(store.directory),
                                        store.count, size))
 
+    def _updateStackInfo(self) -> None:
+        """Řádek s tím, co z intervalu a počtu snímků vychází."""
+        count = self.spin_stack.value()
+        if count <= 1:
+            self.lbl_stack.setText("Měří se z jednoho snímku.")
+            return
+        step = self.spin_interval.value() / count
+        self.lbl_stack.setText(
+            "Snímek každých {:.2g} s, měření z průměru {} snímků "
+            "(šum na {:.0f} %).".format(step, count, 100.0 / (count ** 0.5)))
+
+    def stackFrames(self) -> int:
+        return self.spin_stack.value()
+
+    def setStackProgress(self, taken: int, total: int) -> None:
+        if total <= 1 or taken >= total:
+            self._updateStackInfo()
+            return
+        self.lbl_stack.setText(f"Sbírám snímky do průměru… {taken}/{total}")
+
     def setPendingInfo(self, pending: int) -> None:
         """Kolik snímků čeká na rozbor – aby bylo vidět, že se něco dopočítává."""
         self.lbl_pending.setText(
@@ -546,13 +586,18 @@ class DarkFieldPanel(QWidget):
         pairs = ((self.spin_interval, "interval_s"), (self.spin_sigma, "sigma"),
                  (self.spin_abs, "absolute"), (self.spin_minarea, "min_area_px"),
                  (self.spin_bias_frames, "bias_frames"),
-                 (self.spin_queue, "queue_mb"))
+                 (self.spin_queue, "queue_mb"),
+                 (self.spin_stack, "stack_frames"))
         for widget, key in pairs:
             if key in data:
                 try:
                     widget.setValue(type(widget.value())(data[key]))
                 except (TypeError, ValueError):
                     pass
+        if "interval_s" in data and "stack_frames" not in data:
+            # Starší soubor průměrování neznal – měřilo se z jednoho snímku
+            # a interval znamenal totéž co dnes. Ať se chová jako tehdy.
+            self.spin_stack.setValue(1)
         mode = data.get("threshold_mode")
         if mode in (df.THRESHOLD_SIGMA, df.THRESHOLD_ABSOLUTE):
             self.seg_mode.setCurrentIndex(0 if mode == df.THRESHOLD_SIGMA else 1)

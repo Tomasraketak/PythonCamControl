@@ -21,8 +21,14 @@ tmavé a všechno, co na něm ulpí, rozptyluje světlo a svítí.
    kdykoli později – ale platí jen tehdy, když se od té doby nezměnila
    expozice, zisk, osvětlení ani rozlišení.
 3. **Nastavte práh.** Viz níže.
-4. **Spusťte měření.** V zadaném intervalu (výchozí 1 s) se vyhodnotí
-   snímek a přibude řádek do tabulky. **Tabulka a graf…** otevře okno
+4. **Spusťte měření.** V zadaném intervalu (výchozí 5 s) přibude řádek do
+   tabulky. Měření nevzniká z jediného snímku: během intervalu se pořídí
+   *Průměrovat* snímků (výchozích pět, tedy jeden za sekundu), zprůměrují
+   se a teprve ten průměr se uloží jako PNG a vyhodnotí. Šum senzoru je
+   mezi snímky nezávislý, takže průměr z pěti ho potlačí na 1/√5 ≈ 45 %
+   a slabý film, který v jednom snímku mizí v šumu, se dostane nad práh.
+   Dílčí snímky se nikam neukládají. *Průměrovat 1* chování vrátí na
+   jeden snímek na měření. **Tabulka a graf…** otevře okno
    s průběhem. Zastavení měření tabulku uloží do CSV samo a další spuštění
    začne s prázdnou řadou.
 

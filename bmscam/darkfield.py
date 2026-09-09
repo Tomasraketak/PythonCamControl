@@ -69,7 +69,7 @@ class Settings:
     """Nastavení měření – všechno, co jde v okně přenastavit."""
 
     def __init__(self, **kwargs):
-        self.interval_s: float = 1.0        # jak často měřit
+        self.interval_s: float = 5.0        # jak často vzniká měření
         self.threshold_mode: str = THRESHOLD_SIGMA
         self.sigma: float = 5.0             # práh = pozadí + sigma * šum
         self.absolute: float = 12.0         # práh v ADU nad bias
@@ -79,6 +79,7 @@ class Settings:
         self.roi: Optional[Tuple[int, int, int, int]] = None   # x, y, w, h
         self.store_frames: bool = True      # ukládat snímky pro zpětný rozbor
         self.queue_mb: int = 3072           # kolik RAM smí zabrat fronta rozboru
+        self.stack_frames: int = 5          # kolik snímků zprůměrovat do měření
         self.multichannel: bool = False     # měřit postupně pod R, G a B
         self.settle_ms: int = 400           # co počkat po přepnutí barvy
         # násobek expozičního času a posun ostření pro každý kanál
@@ -232,6 +233,53 @@ class BiasSet:
         if not items:
             raise ValueError("Soubor neobsahuje žádnou referenci.")
         return cls(items)
+
+
+class FrameStacker:
+    """Průměr několika snímků za sebou; měří se až z toho průměru.
+
+    Šum senzoru je mezi snímky nezávislý, takže průměr z pěti snímků ho
+    potlačí na 1/√5, tedy na 45 %. Slabý film, který v jednom snímku mizí
+    v šumu, se tím dostane nad práh. Výsledek zůstává osmibitový jako
+    zbytek řetězce – zaokrouhlení na půl ADU je proti šumu senzoru
+    zanedbatelné.
+    """
+
+    def __init__(self, count: int):
+        self.count = max(1, int(count))
+        self.taken = 0
+        self.first: Optional[datetime] = None
+        self.channel = ""
+        self._sum: Optional[np.ndarray] = None
+
+    def reset(self) -> None:
+        self.taken = 0
+        self.first = None
+        self._sum = None
+
+    def add(self, gray: np.ndarray, when: Optional[datetime] = None,
+            channel: str = "") -> bool:
+        """Přidá dílčí snímek. Vrací True, když je průměr hotový.
+
+        Změna rozlišení nebo kanálu rozdělanou dávku zahodí – míchat
+        snímky z různých podmínek by dalo nesmysl."""
+        if (self._sum is None or self._sum.shape != gray.shape
+                or channel != self.channel):
+            self.reset()
+            self.channel = channel
+            self._sum = np.zeros(gray.shape, dtype=np.float32)
+        if self.first is None:
+            self.first = when
+        self._sum += gray
+        self.taken += 1
+        return self.taken >= self.count
+
+    def result(self) -> np.ndarray:
+        """Zprůměrovaný snímek (uint8, zaokrouhlený)."""
+        if self._sum is None or not self.taken:
+            raise ValueError("Není co průměrovat.")
+        average = self._sum / float(self.taken)
+        return np.clip(average + 0.5, 0, 255).astype(np.uint8)
 
 
 class BiasCollector:

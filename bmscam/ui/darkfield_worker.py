@@ -31,12 +31,18 @@ class _Worker(QObject):
     sampleReady = pyqtSignal(object, object)    # metriky, čas pořízení
     biasProgress = pyqtSignal(int, int)
     biasReady = pyqtSignal(object)
+    stackProgress = pyqtSignal(int, int)        # dílčí snímky do průměru
     failed = pyqtSignal(str)
     finished = pyqtSignal()                     # dávka hotová, můžeš poslat další
 
     def __init__(self):
         super().__init__()
         self._collector: Optional[df.BiasCollector] = None
+        self._stacker: Optional[df.FrameStacker] = None
+
+    @pyqtSlot()
+    def cancelStack(self) -> None:
+        self._stacker = None
 
     @pyqtSlot(int)
     def startBias(self, count: int) -> None:
@@ -59,6 +65,19 @@ class _Worker(QObject):
                 else:
                     self.biasProgress.emit(collector.taken, collector.count)
                 return
+            count = max(1, int(getattr(settings, "stack_frames", 1)))
+            if count > 1:
+                # Měří se až z průměru několika snímků; dílčí snímky se
+                # nikam neukládají, na disk jde jen ten zprůměrovaný.
+                stacker = self._stacker
+                if stacker is None or stacker.count != count:
+                    stacker = self._stacker = df.FrameStacker(count)
+                if not stacker.add(gray, when, channel or ""):
+                    self.stackProgress.emit(stacker.taken, stacker.count)
+                    return
+                self.stackProgress.emit(stacker.count, stacker.count)
+                gray = stacker.result()
+                self._stacker = None
             if store is not None:
                 store.save(gray, when, channel or "")
             metrics = df.analyze(df.crop(gray, settings.roi), bias, settings)
@@ -77,11 +96,13 @@ class DarkFieldRunner(QObject):
     sampleReady = pyqtSignal(object, object)
     biasProgress = pyqtSignal(int, int)
     biasReady = pyqtSignal(object)
+    stackProgress = pyqtSignal(int, int)
     failed = pyqtSignal(str)
 
     _submit = pyqtSignal(object, object, object, object, object, object)
     _startBias = pyqtSignal(int)
     _cancelBias = pyqtSignal()
+    _cancelStack = pyqtSignal()
 
     #: kolik dat smí čekat ve frontě v paměti (jeden 4K snímek = 8 MB);
     #: tři gigabajty vydrží asi 380 snímků, tedy přes šest minut po sekundě
@@ -104,9 +125,11 @@ class DarkFieldRunner(QObject):
         self._submit.connect(self._worker.process)
         self._startBias.connect(self._worker.startBias)
         self._cancelBias.connect(self._worker.cancelBias)
+        self._cancelStack.connect(self._worker.cancelStack)
         self._worker.sampleReady.connect(self.sampleReady)
         self._worker.biasProgress.connect(self.biasProgress)
         self._worker.biasReady.connect(self._onBiasReady)
+        self._worker.stackProgress.connect(self.stackProgress)
         self._worker.failed.connect(self._onFailed)
         self._worker.finished.connect(self._onFinished)
         self._thread.start()
@@ -149,6 +172,10 @@ class DarkFieldRunner(QObject):
     def cancelBias(self) -> None:
         self.collecting_bias = False
         self._cancelBias.emit()
+
+    def cancelStack(self) -> None:
+        """Zahodí rozdělaný průměr (konec měření, změna nastavení)."""
+        self._cancelStack.emit()
 
     # ------------------------------------------------------------ zpětně ---
     def _onFinished(self) -> None:
