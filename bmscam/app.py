@@ -7,7 +7,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication
 
 from . import qtenv
-from .ui import theme
+from .ui import errors, theme
 from .ui.main_window import APP_NAME, MainWindow
 
 
@@ -79,6 +79,9 @@ def main(argv=None) -> int:
     app.setOrganizationName("BMS")
     app.setStyle("Fusion")
     app.setStyleSheet(theme.stylesheet())
+    # Bez tohohle ukončí PyQt5 celý proces při jakékoliv neodchycené
+    # výjimce ve slotu – tedy i při chybě v obsluze jednoho kliknutí.
+    errors.install(APP_NAME)
 
     win = MainWindow(prefer_demo=args.demo, include_demo=not args.no_demo)
     win.show()

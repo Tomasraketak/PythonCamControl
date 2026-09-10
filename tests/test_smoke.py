@@ -2268,6 +2268,141 @@ def test_opencv_preload_runs_before_qt():
     assert out.stdout.strip() == "True True", out.stdout + out.stderr
 
 
+def test_reference_written_here_is_readable_by_the_analyzer():
+    """Reference z měření musí obrazovka analýzy přečíst a popsat.
+
+    Přesně tady spadl program uživateli: popis reference sahal na pole,
+    které záznam ReferenceRecord nemá."""
+    import shutil
+    import tempfile
+
+    import numpy as np
+
+    from bmscam import darkfield as df, workspace
+    from bmscam.dfa import reference as refmod
+    from bmscam.ui.analyzer_screen import AnalyzerScreen
+    from bmscam.ui.main_window import MainWindow
+
+    app = _app()
+    base = tempfile.mkdtemp()
+    measurement = os.path.join(base, "darkfield_20260910_120000")
+    ref_dir = os.path.join(base, "reference")
+    os.makedirs(measurement)
+    os.makedirs(ref_dir)
+    try:
+        # reference se uloží přesně tak, jak ji ukládá měření
+        bias = df.BiasSet()
+        bias.put("", df.Bias(np.full((60, 80), 12.0, np.float32), 16))
+        npz = os.path.join(ref_dir, "reference_20260910_115000.npz")
+        bias.save(npz, "expozice 20 ms · zisk 100")
+        data = workspace.new(capture={"save_dir": base})
+        data["reference"] = {"file": os.path.basename(npz),
+                             "describe": bias.describe(), "note": "test"}
+        workspace.save(os.path.join(ref_dir, "reference_20260910_115000.json"), data)
+
+        records = refmod.list_references(ref_dir)
+        assert len(records) == 1
+        assert records[0].name.endswith(".npz")
+        assert records[0].label
+
+        win = MainWindow(prefer_demo=True)
+        try:
+            win.showScreen(1)
+            app.processEvents()
+            screen = win.analyzer
+            assert isinstance(screen, AnalyzerScreen)
+            screen.base_dir = base
+            screen.selected_folder = measurement
+            screen.reference_dir = ref_dir
+            screen.updateReferenceInfo()
+            text = screen.lbl_reference.text()
+            assert "1 referencí" in text, text
+            assert "reference_20260910_115000.npz" in text
+            assert "nejde" not in text.lower(), text
+
+            # a načtení dat reference projde celým řetězcem až k biasu
+            planes = refmod.load_reference(records[0])
+            assert planes.mono.shape == (60, 80)
+        finally:
+            win.close()
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
+def test_unhandled_exception_shows_a_dialog_instead_of_killing_the_app():
+    """Chyba ve slotu nesmí ukončit proces – PyQt5 by jinak zavolal abort."""
+    import sys as _sys
+
+    from bmscam.ui import errors
+
+    _app()
+    errors._installed = False
+    original = _sys.excepthook
+    try:
+        errors.install("Test")
+        assert _sys.excepthook is not original
+        shown = []
+        from PyQt5.QtWidgets import QMessageBox
+        original_exec = QMessageBox.exec_
+        QMessageBox.exec_ = lambda self: shown.append(self.text()) or 0
+        try:
+            _sys.excepthook(ValueError, ValueError("rozbité"), None)
+        finally:
+            QMessageBox.exec_ = original_exec
+        assert shown and "rozbité" in shown[0]
+    finally:
+        _sys.excepthook = original
+        errors._installed = False
+
+
+def test_ui_only_touches_fields_the_vendored_core_really_has():
+    """Smlouva mezi rozhraním a převzatým jádrem.
+
+    Pád u uživatele vznikl tím, že obrazovka sáhla na pole, které záznam
+    reference nemá. Tenhle test projde všechna pole, na která rozhraní
+    sahá, aby se to při příští aktualizaci jádra poznalo hned."""
+    from dataclasses import fields
+
+    from bmscam.dfa import analyzer as core, exporter, frameio, reference
+    from bmscam.dfa.alignment import AlignmentModel
+    from bmscam.dfa.live import _METRIC_MAP
+
+    def has(cls, name):
+        return (name in {f.name for f in fields(cls)}
+                if hasattr(cls, "__dataclass_fields__") else hasattr(cls, name)) \
+            or hasattr(cls, name)
+
+    for name in ("name", "label", "npz_path", "created"):
+        assert has(reference.ReferenceRecord, name), name
+    for name in ("data", "frames_used", "binning", "full_scale", "is_external",
+                 "reference_path", "reference_label", "level_offset_adu"):
+        assert has(core.BiasModel, name), name
+    for name in ("measured_drift_px", "crop", "crop_fraction", "usable",
+                 "measure", "hot_mask"):
+        assert has(AlignmentModel, name), name
+    for name in ("metrics", "bias", "params", "alignment", "elapsed_s",
+                 "cancelled", "warnings", "notes"):
+        assert has(core.SeriesResult, name), name
+    for name in ("is_bias_frame", "timestamp", "filepath", "align_ok"):
+        assert has(core.FrameMetrics, name), name
+
+    # metriky, které živý rozbor překládá na sloupce tabulky
+    metric_names = {f.name for f in fields(core.FrameMetrics)}
+    for _ours, theirs in _METRIC_MAP:
+        assert theirs in metric_names, theirs
+    for _name, attr, _spec in exporter.CSV_COLUMNS:
+        assert attr is None or attr in metric_names, attr
+
+    for module, names in ((exporter, ("summarize", "export_all", "export_to_csv",
+                                      "export_summary_plots", "_fmt")),
+                          (frameio, ("list_image_files", "list_measurement_folders",
+                                     "load_frame", "build_time_axis")),
+                          (reference, ("find_reference_dir", "list_references",
+                                       "load_reference"))):
+        for name in names:
+            assert hasattr(module, name), f"{module.__name__}.{name}"
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

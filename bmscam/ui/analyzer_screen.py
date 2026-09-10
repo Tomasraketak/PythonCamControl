@@ -418,6 +418,13 @@ class AnalyzerScreen(QWidget):
         self.updateReferenceInfo()
 
     def _onFolderSelected(self) -> None:
+        # Slot Qt: výjimka odsud by v PyQt5 shodila celou aplikaci.
+        try:
+            self._selectFolder()
+        except Exception as exc:                            # noqa: BLE001
+            self.lbl_status.setText(f"Složku nejde vybrat: {exc}")
+
+    def _selectFolder(self) -> None:
         row_index = self.tbl_folders.currentRow()
         item = self.tbl_folders.item(row_index, 0) if row_index >= 0 else None
         if item is not None:
@@ -441,29 +448,30 @@ class AnalyzerScreen(QWidget):
         self.updateReferenceInfo()
 
     def updateReferenceInfo(self) -> None:
-        """Napíše, která reference by se pro vybrané měření použila."""
+        """Napíše, která reference by se pro vybrané měření použila.
+
+        Celé tělo je odolné vůči výjimkám: běží jako slot Qt a neodchycená
+        výjimka ve slotu PyQt5 ukončí celý proces, ne jen tuhle akci."""
+        try:
+            self.lbl_reference.setText(self._referenceInfo())
+        except Exception as exc:                            # noqa: BLE001
+            self.lbl_reference.setText(f"Reference nejde přečíst: {exc}")
+
+    def _referenceInfo(self) -> str:
         mode = self.cmb_reference.currentData()
         if mode == "serie":
-            self.lbl_reference.setText("Pozadí se spočítá z prvních snímků série.")
-            return
+            return "Pozadí se spočítá z prvních snímků série."
         folder = self.reference_dir or (
             refmod.find_reference_dir(self.selected_folder or self.base_dir) or "")
         if not folder:
-            self.lbl_reference.setText(
-                "Složka s referencemi nenalezena – pozadí se vezme ze série.")
-            return
-        try:
-            records = refmod.list_references(folder)
-        except Exception as exc:                            # noqa: BLE001
-            self.lbl_reference.setText(f"Reference nejde načíst: {exc}")
-            return
+            return "Složka s referencemi nenalezena – pozadí se vezme ze série."
+        records = refmod.list_references(folder)
         if not records:
-            self.lbl_reference.setText(f"Ve složce {folder} nejsou žádné .npz reference.")
-            return
-        self.lbl_reference.setText(
-            "{}: {} referencí, poslední {}".format(
-                os.path.basename(folder) or folder, len(records),
-                os.path.basename(records[-1].path)))
+            return f"Ve složce {folder} nejsou žádné reference (*.npz)."
+        latest = records[-1]
+        return "{}: {} referencí, poslední {} ({})".format(
+            os.path.basename(folder) or folder, len(records),
+            latest.name, latest.label)
 
     # ---------------------------------------------------------- parametry ---
     def params(self):

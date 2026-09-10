@@ -306,6 +306,11 @@ přenesený do aplikace, takže nemusíte spouštět dva.
 6. **Uložit výsledky…** zapíše CSV, JSON souhrn i PNG s grafy.
    **Načíst hotovou…** zobrazí dřív uloženou tabulku bez počítání.
 
+Popisek pod volbou reference říká, kolik referencí se ve složce našlo a
+která je nejnovější (i s časem a rozlišením). Reference ukládá záznamová
+část této aplikace do podsložky `reference`, takže obojí do sebe zapadá
+bez ručního kopírování.
+
 Obrazovka se staví až při prvním otevření – natahuje se s ní OpenCV a celé
 jádro rozboru, takže první přepnutí chvíli trvá (kurzor se změní na
 přesýpací hodiny). Když OpenCV chybí nebo se nedá načíst, aplikace to
