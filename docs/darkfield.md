@@ -32,6 +32,30 @@ tmavé a všechno, co na něm ulpí, rozptyluje světlo a svítí.
    s průběhem. Zastavení měření tabulku uloží do CSV samo a další spuštění
    začne s prázdnou řadou.
 
+## Obrazovka „Rozbor“
+
+Nahoře v okně je přepínač **Kamera / Rozbor**. Druhá obrazovka je celý
+DarkFieldAnalyzer přenesený dovnitř aplikace – nemusíte tedy pouštět dva
+programy:
+
+* seznam složek s měřeními a výběr té zpracovávané,
+* volba referenčního pozadí (ze složky `reference`, nebo z prvních snímků
+  série) a **srovnání driftu** sklíčka podle „souhvězdí“ prachových částic,
+* všechny parametry rozboru včetně binningu, prahů, klasifikace vláken,
+  ROI a počtu vláken procesoru,
+* průchod výsledkem **snímek po snímku** s barevnou klasifikační maskou
+  (opar, mikročástice, shluky, vlákna, hotspoty, těžiště) a s režimy
+  diference / opar / ostrá složka / binární maska,
+* tabulka všech metrik, souhrn měření a souhrnné grafy,
+* export CSV + JSON + PNG grafů a **načtení dřív uložené analýzy** bez
+  opakovaného počítání,
+* záložka *Průvodce* s výkladem metody přímo od autora původní aplikace.
+
+Jádro rozboru je vendorované v `bmscam/dfa/` – jsou to původní soubory
+projektu, změněné jen v importech. Obě aplikace proto na stejných datech
+dají **stejná čísla**; ověřuje to test, který porovnává výstup s upstream
+kopií, pokud je na stroji k dispozici.
+
 ## Jak se snímek vyhodnocuje
 
 Metoda je převzatá z projektu
@@ -61,6 +85,9 @@ Metoda je převzatá z projektu
 
 Pokrytí tedy nově zahrnuje i difuzní opar – proto vychází vyšší než ve
 starší verzi, která hlásila jen plochu nad prostým prahem.
+
+Živé měření u kamery volá stejné jádro jako obrazovka *Rozbor* (jen pro
+jeden snímek), takže se čísla z obou cest dají porovnávat.
 
 Bez OpenCV se použije původní jednodušší metoda (prostý práh nad
 rozdílem); ve sloupci `method` v CSV je vidět, která se počítala.

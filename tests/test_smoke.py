@@ -2064,6 +2064,153 @@ def test_sample_material_and_temperature_reach_names_and_graphs():
         shutil.rmtree(folder, ignore_errors=True)
 
 
+def _make_series(folder, frames=8, size=(360, 480), rng_seed=3):
+    """Vyrobí umělou sérii snímků s přibývajícími částicemi."""
+    import numpy as np
+    import cv2
+
+    rng = np.random.default_rng(rng_seed)
+    base = rng.normal(18.0, 2.0, size).astype(np.float32)
+    paths = []
+    for index in range(frames):
+        frame = base + rng.normal(0, 1.0, size)
+        for _ in range(2 + index):
+            y = int(rng.integers(5, size[0] - 6))
+            x = int(rng.integers(5, size[1] - 6))
+            frame[y:y + 4, x:x + 4] += 70.0
+        name = "df_{:05d}_20260910_1200{:02d}_000.png".format(index + 1, index)
+        path = os.path.join(folder, name)
+        cv2.imwrite(path, np.clip(frame, 0, 255).astype("uint8"))
+        paths.append(path)
+    return paths
+
+
+def test_vendored_core_matches_upstream_analyzer():
+    """Převzaté jádro musí dát stejná čísla jako DarkFieldAnalyzer.
+
+    Porovnává se proti *upstream* kopii, pokud je na stroji k dispozici;
+    jinak se aspoň ověří, že dávkový rozbor a živý rozbor jednoho snímku
+    počítají totéž. Právě kvůli téhle shodě se jádro vendorovalo, místo
+    aby se metoda psala znovu."""
+    import shutil
+    import tempfile
+
+    import numpy as np
+
+    from bmscam import darkfield as df
+    from bmscam.dfa import analyzer as core, frameio
+
+    folder = tempfile.mkdtemp()
+    try:
+        paths = _make_series(folder)
+        params = core.AnalysisParams(bias_frames=3, binning=1, align_frames=False)
+        result = core.analyze_series(frameio.list_image_files(folder), params)
+        assert result.metrics, result.warnings
+        assert result.bias is not None
+
+        # Živý rozbor jednoho snímku (jak běží u kamery) musí dát stejná
+        # čísla jako dávkový rozbor téhož snímku se stejným pozadím.
+        last = result.metrics[-1]
+        frame = frameio.load_frame(last.filepath, full_scale=result.bias.full_scale,
+                                   mono_mode=params.mono_mode)
+        settings = df.Settings(sigma=params.sigma, min_area_px=params.min_area_px,
+                               absolute=params.absolute_threshold,
+                               haze_threshold=params.haze_threshold,
+                               cluster_min_area_px=params.cluster_min_area_px,
+                               fiber_aspect_ratio=params.fiber_aspect_ratio,
+                               fiber_min_length_px=params.fiber_min_length_px,
+                               saturation_adu=params.saturation_adu,
+                               min_threshold_adu=params.min_threshold_adu,
+                               binning=1, um_per_px=params.um_per_px)
+        live = df.analyze(frame.data, df.Bias(result.bias.data, 3), settings)
+        assert abs(live["coverage_pct"] - last.total_coverage_pct) < 1e-9
+        assert live["particles"] == last.total_particle_count
+        assert live["points"] == last.point_count
+        assert abs(live["threshold"] - last.applied_threshold) < 1e-9
+        assert abs(live["cleanliness"] - last.cleanliness_score) < 1e-9
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def test_analyzer_screen_runs_a_batch_and_reloads_it():
+    """Obrazovka rozboru projde celý postup: složka → rozbor → tabulka → CSV."""
+    import shutil
+    import tempfile
+    import time as _time
+
+    from bmscam.ui.analyzer_screen import AnalyzerScreen
+    from bmscam.ui.main_window import MainWindow
+
+    app = _app()
+    base = tempfile.mkdtemp()
+    folder = os.path.join(base, "darkfield_20260910_120000_pla_120C")
+    os.makedirs(folder)
+    try:
+        _make_series(folder, frames=6)
+        win = MainWindow(prefer_demo=True)
+        try:
+            win.showScreen(1)                     # obrazovka se staví až teď
+            app.processEvents()
+            screen = win.analyzer
+            assert isinstance(screen, AnalyzerScreen)
+            screen.base_dir = base
+            screen.refreshFolders()
+            assert screen.tbl_folders.rowCount() >= 1
+            screen.tbl_folders.selectRow(0)
+            assert screen.selected_folder == folder
+
+            screen.spin_bias.setValue(2)
+            screen.chk_align.setChecked(False)
+            screen.cmb_binning.setCurrentIndex(1)      # plné rozlišení
+            screen.startAnalysis()
+            deadline = _time.time() + 60.0
+            while _time.time() < deadline and screen.result is None:
+                app.processEvents()
+                _time.sleep(0.02)
+            assert screen.result is not None, "rozbor nedoběhl"
+            assert screen.tbl_results.rowCount() == len(screen.result.metrics)
+            assert "Souhrn" in screen.txt_summary.toHtml()
+
+            # prohlížeč dostal sérii a umí vykreslit snímek
+            assert screen.viewer.image_paths
+            screen.viewer.render_current_frame()
+            app.processEvents()
+            assert "Pokrytí" in screen.viewer.status_lbl.text()
+
+            # export a zpětné načtení tabulky
+            from bmscam.dfa import exporter
+            csv_path = os.path.join(folder, "analyza.csv")
+            exporter.export_to_csv(screen.result.metrics, csv_path,
+                                   screen.result.params, folder_name="test")
+            header, rows = AnalyzerScreen._readCsv(csv_path)
+            assert header[0] == "Index"
+            assert len(rows) == len(screen.result.metrics)
+
+            # průvodce metodou je součástí obrazovky
+            titles = [screen.tabs.tabText(i) for i in range(screen.tabs.count())]
+            assert titles == ["Snímky", "Tabulka", "Souhrn", "Grafy", "Průvodce"]
+        finally:
+            win.close()
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
+def test_guide_document_follows_the_palette():
+    """Nápověda převzatá z DarkFieldAnalyzeru se v tmavém režimu přebarví."""
+    from bmscam.dfa import help_text
+    from bmscam.ui import theme
+
+    light = theme.document_html(help_text.HELP_HTML)
+    assert light == help_text.HELP_HTML, "světlý režim nechává dokument beze změny"
+    try:
+        theme.set_mode("dark")
+        dark = theme.document_html(help_text.HELP_HTML)
+        assert "#F8F9FA" not in dark, "papírové pozadí zůstalo v tmavém režimu"
+        assert theme.SURFACE in dark and theme.TEXT in dark
+    finally:
+        theme.set_mode("light")
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

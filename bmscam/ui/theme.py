@@ -154,6 +154,54 @@ def heading_font(size: int = 13, weight: int = 87) -> QFont:
     return font
 
 
+#: Barvy „papírové“ nápovědy převzaté z DarkFieldAnalyzeru a jejich
+#: protějšky v tmavé paletě. Přebarvuje se přímo v HTML, protože
+#: rich-text engine Qt nezvládá spolehlivě přepsat cizí styl doplňkovým
+#: blokem – u seskupených selektorů (.box, .tip, .warn) ho ignoruje.
+_PAPER_COLORS = {
+    "#222": "TEXT",
+    "#1B4F72": "TEXT",
+    "#2C3E50": "TEXT",
+    "#F8F9FA": "SURFACE",
+    "#E8F8F5": "SURFACE",
+    "#FEF9E7": "SURFACE",
+    "#EAEDED": "SURFACE",
+    "#EEE": "SURFACE",
+    "#BDC3C7": "DIVIDER",
+}
+
+
+def document_html(html: str) -> str:
+    """Dokument (nápovědu) přebarví do aktuální palety.
+
+    Ve světlém režimu se nemění nic – vypadá jako v původní aplikaci."""
+    if _mode != "dark":
+        return html
+    for paper, token in _PAPER_COLORS.items():
+        html = html.replace(paper, globals()[token])
+    return html
+
+
+def document_css() -> str:
+    """Stylopis pro HTML dokumenty zobrazené v aplikaci.
+
+    Nápověda i souhrn přicházejí z převzatého projektu s vlastními
+    barvami navrženými pro světlý papír. Tenhle blok se vkládá za ně,
+    takže dokument vždycky sedí na aktuální paletu."""
+    return (
+        f"body {{ color: {TEXT}; background: {BG}; "
+        f"font-family: 'Segoe UI', Arial, sans-serif; line-height: 1.55; }} "
+        f"h1, h2, h3 {{ color: {ACCENT}; border-color: {DIVIDER}; }} "
+        f"table {{ border-collapse: collapse; }} "
+        f"th, td {{ border: 1px solid {DIVIDER}; color: {TEXT}; padding: 4px 8px; }} "
+        f"th {{ background: {SURFACE}; }} "
+        f"code {{ background: {SURFACE}; color: {TEXT}; padding: 1px 4px; }} "
+        f".box, .tip, .warn {{ background: {SURFACE}; color: {TEXT}; "
+        f"border-left: 4px solid {ACCENT}; padding: 8px 12px; }} "
+        f"a {{ color: {ACCENT}; }}"
+    )
+
+
 # -------------------------------------------------------------------- ikony -
 #: Obrysové ikony (sada Lucide) použité v předloze.
 _ICONS = {
@@ -345,6 +393,24 @@ QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 QScrollBar:horizontal {{ background: transparent; height: 10px; }}
 QScrollBar::handle:horizontal {{ background: {NEUTRAL_400}; min-width: 30px; }}
+
+/* --------------------------------------------------------------- záložky -- */
+QTabWidget::pane {{
+    background: {BG}; border: 1px solid {DIVIDER}; top: -1px;
+}}
+QTabBar::tab {{
+    background: {SURFACE}; color: {NEUTRAL_700}; padding: 6px 14px;
+    border: 1px solid {DIVIDER}; border-bottom: none; margin-right: 2px;
+    font-size: 12px; font-weight: 600;
+}}
+QTabBar::tab:selected {{ background: {BG}; color: {TEXT}; }}
+QTabBar::tab:hover:!selected {{ background: {NEUTRAL_300}; }}
+
+/* Dokumenty (nápověda, souhrn) – vlastní barvy dostávají z document_css. */
+QTextBrowser, QTextEdit {{
+    background: {BG}; color: {TEXT}; border: 1px solid {DIVIDER};
+    selection-background-color: {ACCENT}; selection-color: {ON_ACCENT};
+}}
 
 /* ----------------------------------------------------- dialogy a průběh -- */
 QDialogButtonBox QPushButton, QMessageBox QPushButton {{

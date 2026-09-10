@@ -2,3 +2,4 @@ PyQt5>=5.12
 pyserial>=3.4        # ovládání osvětlení přes Arduino
 numpy>=1.20          # jen pro simulovaný (demo) režim – pro provoz s kamerou není nutné
 opencv-python>=4.5   # volitelné: záložní živý obraz přes UVC, když SDK kameru nenajde
+matplotlib>=3.5      # volitelné: souhrnné grafy na obrazovce Rozbor

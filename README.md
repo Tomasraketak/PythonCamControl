@@ -68,6 +68,12 @@ Zdrojový návrh je v [docs/design](docs/design/).
   Soubor se dá přiložit k naměřeným datům, takže je za měsíc jasné, za jakých
   podmínek vznikla. Starší profily, které měly jen vlastnosti kamery, se načtou
   taky. Soubory leží v podsložce `nastavení` uvnitř pracovní složky.
+* **Obrazovka „Rozbor“** – celý [DarkFieldAnalyzer](https://github.com/Tomasraketak/DarkFieldAnalyzer)
+  uvnitř aplikace: výběr složky s měřením, volba reference, srovnání driftu
+  sklíčka, všechny parametry rozboru, procházení snímek po snímku s barevnou
+  klasifikační maskou, tabulka, souhrn, grafy, export a průvodce metodou.
+  Jádro je vendorované v `bmscam/dfa/`, takže obě aplikace dávají na stejných
+  datech stejná čísla.
 * **Rozbor podle DarkFieldAnalyzeru** – metoda je převzatá z projektu
   [DarkFieldAnalyzer](https://github.com/Tomasraketak/DarkFieldAnalyzer):
   binning, oddělení difuzního oparu, práh z šumu měřeného mezi sousedními

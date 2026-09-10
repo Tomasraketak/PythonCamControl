@@ -178,7 +178,8 @@ class MainWindow(QMainWindow):
 
         outer.addWidget(self._buildNav())
         outer.addWidget(hline())
-        outer.addWidget(self._buildToolbar())
+        self.toolbar = self._buildToolbar()
+        outer.addWidget(self.toolbar)
         outer.addWidget(hline())
 
         self.view = VideoView()
@@ -208,7 +209,16 @@ class MainWindow(QMainWindow):
         middle.addWidget(self.view, 1)
         middle.addWidget(self._vsep())
         middle.addWidget(self.right_panel)
-        outer.addLayout(middle, 1)
+        camera_page = QWidget()
+        camera_page.setLayout(middle)
+
+        # Obrazovka rozboru se staví až při prvním přepnutí: táhne s sebou
+        # OpenCV, které se na Windows nesmí načíst dřív než zásuvné moduly Qt.
+        self.analyzer = None
+        self.screens = QStackedWidget()
+        self.screens.addWidget(camera_page)
+        self.screens.addWidget(QWidget())
+        outer.addWidget(self.screens, 1)
 
         outer.addWidget(hline())
         outer.addWidget(self._buildStatusBar())
@@ -236,6 +246,13 @@ class MainWindow(QMainWindow):
         lay.addWidget(label("BMS CAM CONTROL", "brand"))
         self.tag_camera = Tag("Nepřipojeno")
         lay.addWidget(self.tag_camera)
+        lay.addSpacing(theme.SPACE_4)
+
+        # Dvě obrazovky: snímání u kamery a dávkový rozbor nafocených sérií.
+        self.seg_screen = SegmentedControl(["Kamera", "Rozbor"])
+        self.seg_screen.setFixedWidth(180)
+        self.seg_screen.currentChanged.connect(self.showScreen)
+        lay.addWidget(self.seg_screen)
         lay.addStretch(1)
 
         menu_button = icon_button("menu", "Další akce")
@@ -248,6 +265,29 @@ class MainWindow(QMainWindow):
         self.btn_connect.clicked.connect(self.toggleConnect)
         lay.addWidget(self.btn_connect)
         return nav
+
+    def showScreen(self, index: int) -> None:
+        """Přepne mezi obrazovkou kamery a obrazovkou rozboru."""
+        index = 1 if int(index) else 0
+        if index == 1 and self.analyzer is None:
+            from .analyzer_screen import AnalyzerScreen
+            self.analyzer = AnalyzerScreen(self.settings)
+            self.analyzer.statusMessage.connect(self.statusMessage)
+            placeholder = self.screens.widget(1)
+            self.screens.removeWidget(placeholder)
+            placeholder.deleteLater()
+            self.screens.addWidget(self.analyzer)
+        self.screens.setCurrentIndex(index)
+        # Lišta s přiblížením a panel osvětlení patří ke kameře; u rozboru
+        # by jen mátly, protože se týkají živého obrazu.
+        self.toolbar.setVisible(index == 0)
+        self.right_panel.setVisible(index == 0 and self.act_leds.isChecked())
+        if self.seg_screen.currentIndex() != index:
+            self.seg_screen.setCurrentIndex(index, emit=False)
+        if index == 1 and self.analyzer is not None:
+            self.analyzer.refreshFolders()
+        self.statusMessage("Obrazovka: "
+                           + ("rozbor sérií" if index else "kamera"), 3000)
 
     def _buildMenu(self) -> QMenu:
         menu = QMenu(self)
