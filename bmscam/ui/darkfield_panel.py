@@ -20,12 +20,27 @@ from . import theme
 from .widgets import Card, SegmentedControl, button, hline, label, row
 
 #: metriky nabízené v grafu (klíč -> popis)
+#: veličiny nabízené v grafu – stejné, jaké kreslí dávková analýza
 PLOTTABLE = (
     ("coverage_pct", "Pokrytí plochy [%]"),
+    ("haze_pct", "Zamlžení [%]"),
+    ("haze_only_pct", "Opar bez částic [%]"),
     ("particles", "Počet částic"),
+    ("points", "Mikročástic"),
+    ("clusters", "Shluků"),
+    ("fibers", "Vláken"),
+    ("density_mpx", "Hustota částic [1/Mpx]"),
+    ("cleanliness", "Skóre čistoty [%]"),
     ("area_um2", "Plocha částic [µm²]"),
     ("mean_signal", "Průměrný signál [ADU]"),
     ("max_signal", "Maximum [ADU]"),
+    ("snr", "Poměr signál/šum"),
+    ("threshold", "Práh [ADU]"),
+    ("bg_sigma", "Šum pozadí [ADU]"),
+    ("focus", "Ostrost"),
+    ("heterogeneity_pct", "Nehomogenita [%]"),
+    ("rate_coverage", "Rychlost pokrytí [%/s]"),
+    ("rate_haze", "Rychlost zamlžení [%/s]"),
 )
 
 
@@ -408,6 +423,48 @@ class DarkFieldPanel(QWidget):
             "prodlužte.")
         card.add(row(label("Ustálení", "meta"), None, self.spin_settle))
 
+        card.add(label("Rozšířené prahy", "field"))
+        self.spin_haze = QDoubleSpinBox()
+        self.spin_haze.setRange(0.5, 60.0)
+        self.spin_haze.setSingleStep(0.5)
+        self.spin_haze.setValue(4.0)
+        self.spin_haze.setFixedWidth(84)
+        self.spin_haze.setToolTip(
+            "Od jaké úrovně nad referencí se nízkofrekvenční složka počítá "
+            "jako zamlžení (kondenzace, film).")
+        card.add(row(label("Práh zamlžení [ADU]", "meta"), None, self.spin_haze))
+
+        self.spin_cluster = QSpinBox()
+        self.spin_cluster.setRange(20, 20000)
+        self.spin_cluster.setSingleStep(20)
+        self.spin_cluster.setValue(100)
+        self.spin_cluster.setFixedWidth(84)
+        self.spin_cluster.setToolTip("Od téhle plochy je objekt velký shluk.")
+        card.add(row(label("Shluk od [px]", "meta"), None, self.spin_cluster))
+
+        self.spin_aspect = QDoubleSpinBox()
+        self.spin_aspect.setRange(1.5, 20.0)
+        self.spin_aspect.setValue(2.8)
+        self.spin_aspect.setFixedWidth(84)
+        self.spin_aspect.setToolTip(
+            "Protáhlost ekvivalentní elipsy, od které jde o vlákno nebo škrábanec.")
+        card.add(row(label("Protáhlost vlákna", "meta"), None, self.spin_aspect))
+
+        self.spin_fiber_len = QSpinBox()
+        self.spin_fiber_len.setRange(3, 500)
+        self.spin_fiber_len.setValue(12)
+        self.spin_fiber_len.setFixedWidth(84)
+        card.add(row(label("Min. délka vlákna [px]", "meta"), None, self.spin_fiber_len))
+
+        self.cmb_binning = QComboBox()
+        for value, title in ((0, "Automaticky"), (1, "Plné"),
+                             (2, "1/2 (2×2)"), (4, "1/4 (4×4)")):
+            self.cmb_binning.addItem(title, value)
+        self.cmb_binning.setToolTip(
+            "Zmenšení před rozborem (průměrování pixelů). Automaticky se 4K "
+            "počítá v polovičním rozlišení – stejně jako v dávkové analýze.")
+        card.add(row(label("Rozlišení rozboru", "meta"), None, (self.cmb_binning, 2)))
+
         self.chk_roi = QCheckBox("Měřit jen ve vybraném výřezu")
         self.chk_roi.setToolTip(
             "Použije výřez vybraný v obraze (Zobrazení → Výběr oblasti).")
@@ -486,6 +543,9 @@ class DarkFieldPanel(QWidget):
         card.add(row((self.btn_measure, 3), (btn_once, 2)))
 
         self.btn_table = button("Tabulka a graf…", "secondary")
+        self.btn_table.setToolTip(
+            "Průběh měření – stejné veličiny i stejný výpočet jako v tabulce "
+            "na obrazovce Analýza, jen počítané živě snímek po snímku.")
         self.btn_table.clicked.connect(self.showTable)
         btn_csv = button("CSV…", "secondary")
         btn_csv.clicked.connect(self.exportCsv)
@@ -561,6 +621,11 @@ class DarkFieldPanel(QWidget):
             um_per_px=getattr(self, "_um_per_px", 0.0),
             store_frames=self.chk_store.isChecked(),
             stack_frames=self.spin_stack.value(),
+            haze_threshold=self.spin_haze.value(),
+            cluster_min_area_px=self.spin_cluster.value(),
+            fiber_aspect_ratio=self.spin_aspect.value(),
+            fiber_min_length_px=self.spin_fiber_len.value(),
+            binning=self.cmb_binning.currentData(),
             material=self.material(),
             temperature_c=self.temperature(),
             queue_mb=self.spin_queue.value(),
@@ -657,7 +722,11 @@ class DarkFieldPanel(QWidget):
                  (self.spin_abs, "absolute"), (self.spin_minarea, "min_area_px"),
                  (self.spin_bias_frames, "bias_frames"),
                  (self.spin_queue, "queue_mb"),
-                 (self.spin_stack, "stack_frames"))
+                 (self.spin_stack, "stack_frames"),
+                 (self.spin_haze, "haze_threshold"),
+                 (self.spin_cluster, "cluster_min_area_px"),
+                 (self.spin_aspect, "fiber_aspect_ratio"),
+                 (self.spin_fiber_len, "fiber_min_length_px"))
         for widget, key in pairs:
             if key in data:
                 try:
@@ -668,6 +737,9 @@ class DarkFieldPanel(QWidget):
             # Starší soubor průměrování neznal – měřilo se z jednoho snímku
             # a interval znamenal totéž co dnes. Ať se chová jako tehdy.
             self.spin_stack.setValue(1)
+        if "binning" in data:
+            index = self.cmb_binning.findData(int(data["binning"] or 0))
+            self.cmb_binning.setCurrentIndex(max(0, index))
         if "material" in data:
             index = self.cmb_material.findData(str(data["material"]))
             self.cmb_material.setCurrentIndex(max(0, index))

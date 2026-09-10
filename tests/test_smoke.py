@@ -2403,6 +2403,66 @@ def test_ui_only_touches_fields_the_vendored_core_really_has():
             assert hasattr(module, name), f"{module.__name__}.{name}"
 
 
+def test_live_table_matches_the_batch_analysis_row_by_row():
+    """Živé měření musí dát stejné řádky jako dávková analýza.
+
+    Tohle je smysl celého vendorovaného jádra: „Tabulka a graf“ u kamery
+    ukazuje totéž, co by vyšlo, kdyby se stejné snímky pustily obrazovkou
+    Analýza – včetně rychlostí změn a klasifikace fáze děje."""
+    import shutil
+    import tempfile
+
+    from bmscam import darkfield as df
+    from bmscam.dfa import analyzer as core, frameio
+
+    folder = tempfile.mkdtemp()
+    try:
+        _make_series(folder, frames=10, size=(300, 400), rng_seed=9)
+        params = core.AnalysisParams(bias_frames=3, binning=1, align_frames=False)
+        result = core.analyze_series(frameio.list_image_files(folder), params)
+        assert len(result.metrics) >= 5, result.warnings
+
+        settings = df.Settings(
+            sigma=params.sigma, min_area_px=params.min_area_px,
+            haze_threshold=params.haze_threshold,
+            cluster_min_area_px=params.cluster_min_area_px,
+            fiber_aspect_ratio=params.fiber_aspect_ratio,
+            fiber_min_length_px=params.fiber_min_length_px,
+            saturation_adu=params.saturation_adu, binning=1,
+            um_per_px=params.um_per_px)
+        bias = df.Bias(result.bias.data, result.bias.frames_used)
+
+        series = df.Series()
+        for metrics in result.metrics:
+            frame = frameio.load_frame(metrics.filepath,
+                                       full_scale=result.bias.full_scale,
+                                       mono_mode=params.mono_mode)
+            series.add(df.analyze(frame.data, bias, settings), metrics.timestamp)
+
+        pairs = (("coverage_pct", "total_coverage_pct"),
+                 ("particles", "total_particle_count"),
+                 ("points", "point_count"), ("clusters", "cluster_count"),
+                 ("fibers", "fiber_count"), ("haze_pct", "haze_coverage_pct"),
+                 ("haze_only_pct", "haze_only_coverage_pct"),
+                 ("threshold", "applied_threshold"),
+                 ("cleanliness", "cleanliness_score"), ("snr", "snr"),
+                 ("density_mpx", "particle_density_per_mpx"),
+                 ("rate_coverage", "rate_coverage_pct_per_s"),
+                 ("rate_haze", "rate_haze_pct_per_s"),
+                 ("phase", "phase"))
+        assert len(series.samples) == len(result.metrics)
+        for sample, metrics in zip(series.samples, result.metrics):
+            for ours, theirs in pairs:
+                mine, theirs_value = getattr(sample, ours), getattr(metrics, theirs)
+                if isinstance(theirs_value, str):
+                    assert mine == theirs_value, (ours, mine, theirs_value)
+                else:
+                    assert abs(float(mine) - float(theirs_value)) < 1e-9, \
+                        (ours, mine, theirs_value)
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

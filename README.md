@@ -68,6 +68,10 @@ Zdrojový návrh je v [docs/design](docs/design/).
   Soubor se dá přiložit k naměřeným datům, takže je za měsíc jasné, za jakých
   podmínek vznikla. Starší profily, které měly jen vlastnosti kamery, se načtou
   taky. Soubory leží v podsložce `nastavení` uvnitř pracovní složky.
+* **Živě totéž co dávkově** – okno *Tabulka a graf* u kamery ukazuje stejné
+  veličiny a stejná čísla jako tabulka na obrazovce *Analýza*, včetně
+  rychlostí změn a klasifikace fáze děje; hlídá to test, který porovná
+  dávkový a živý průchod stejnou sérií řádek po řádku.
 * **Obrazovka „Analýza“** – celý [DarkFieldAnalyzer](https://github.com/Tomasraketak/DarkFieldAnalyzer)
   uvnitř aplikace: výběr složky s měřením, volba reference, srovnání driftu
   sklíčka, všechny parametry rozboru, procházení snímek po snímku s barevnou

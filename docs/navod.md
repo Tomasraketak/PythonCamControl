@@ -213,7 +213,9 @@ je jen shrnutí kroků:
    sekundu a měří se až z jejich průměru, který se také ukládá jako PNG.
    Šum senzoru tím klesne na 45 %, takže se nad práh dostane i slabý film.
    Počet snímků i interval se dají změnit; hodnota 1 průměrování vypne.
-4. Průběh sledujte v **Tabulka a graf…**. Po **Zastavit měření** se tabulka
+4. Průběh sledujte v **Tabulka a graf…** – je to stejná tabulka i stejné
+   veličiny jako na obrazovce *Analýza*, jen počítané živě (včetně rychlostí
+   změn a fáze děje). Po **Zastavit měření** se tabulka
    uloží do CSV sama (ke snímkům toho běhu, jinak do pracovní složky); cesta
    se vypíše do stavového řádku. Tlačítko **CSV…** zůstává pro uložení jinam.
 5. Další **Spustit měření** začíná s prázdnou tabulkou i grafem – předchozí

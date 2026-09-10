@@ -77,6 +77,31 @@ COLUMNS: Sequence[Tuple[str, str, str]] = (
     ("heterogeneity_pct", "Nehomogenita",    "%"),
     ("focus",          "Ostrost",            ""),
     ("cleanliness",    "Čistota",            "%"),
+    # rozklad pokrytí a velikosti částic – stejné veličiny jako v tabulce
+    # dávkové analýzy, aby se živé a zpětné měření dalo porovnat řádek po řádku
+    ("haze_only_pct",  "Opar bez částic",    "%"),
+    ("point_pct",      "Pokrytí mikročásticemi", "%"),
+    ("cluster_pct",    "Pokrytí shluky",     "%"),
+    ("fiber_pct",      "Pokrytí vlákny",     "%"),
+    ("point_area_px",  "Plocha mikročástic", "px"),
+    ("cluster_area_px", "Plocha shluků",     "px"),
+    ("fiber_area_px",  "Plocha vláken",      "px"),
+    ("median_area_px", "Medián částice",     "px"),
+    ("p90_area_px",    "P90 částice",        "px"),
+    ("max_area_px",    "Největší částice",   "px"),
+    ("diameter_um",    "Ekv. průměr částice", "µm"),
+    ("area_px",        "Plocha celkem",      "px"),
+    ("integrated_signal", "Integrovaný signál", "ADU"),
+    ("bg_level",       "Úroveň pozadí",      "ADU"),
+    ("saturated_px",   "Hotspoty",           "px"),
+    ("centroid_x_pct", "Těžiště X",          "%"),
+    ("centroid_y_pct", "Těžiště Y",          "%"),
+    # rychlosti a fáze děje – dopočítávají se přes celou řadu (viz Series)
+    ("rate_coverage",  "Rychlost pokrytí",   "%/s"),
+    ("rate_haze",      "Rychlost oparu",     "%/s"),
+    ("rate_signal",    "Rychlost signálu",   "ADU/s"),
+    ("rate_particles", "Rychlost částic",    "1/s"),
+    ("phase",          "Fáze děje",          ""),
 )
 
 #: metody rozboru
@@ -134,9 +159,9 @@ class Settings:
     def __init__(self, **kwargs):
         self.interval_s: float = 5.0        # jak často vzniká měření
         self.threshold_mode: str = THRESHOLD_SIGMA
-        self.sigma: float = 5.0             # práh = pozadí + sigma * šum
+        self.sigma: float = 4.0             # práh = pozadí + sigma * šum
         self.absolute: float = 12.0         # práh v ADU nad bias
-        self.min_area_px: int = 2           # menší skvrny = šum, ignorovat
+        self.min_area_px: int = 3           # menší skvrny = šum, ignorovat
         self.bias_frames: int = 16          # kolik snímků průměrovat do biasu
         self.um_per_px: float = 0.0         # 0 = nekalibrováno
         self.roi: Optional[Tuple[int, int, int, int]] = None   # x, y, w, h
@@ -408,8 +433,11 @@ class Sample:
             elif key == "particles":
                 # -1 = bez OpenCV se částice nepočítají
                 out.append("–" if int(value) < 0 else f"{int(value)}")
+            elif key == "phase":
+                out.append(str(value) if value else "–")
             elif key in ("index", "particle_area_px", "points", "clusters",
-                         "fibers", "max_area_px", "saturated_px"):
+                         "fibers", "max_area_px", "saturated_px", "area_px",
+                         "point_area_px", "cluster_area_px", "fiber_area_px"):
                 out.append(f"{int(value)}")
             elif key == "clock":
                 out.append(str(value))
@@ -587,7 +615,52 @@ class Series:
                         clock=when.strftime("%H:%M:%S"),
                         when=when, **metrics)
         self.samples.append(sample)
+        self.update_rates()
         return sample
+
+    def update_rates(self) -> None:
+        """Dopočítá rychlosti změn a fázi děje pro celou řadu.
+
+        Používá se přímo funkce z převzatého jádra, takže živé měření
+        klasifikuje fáze úplně stejně jako dávková analýza. Jádro pracuje
+        s vlastními záznamy, proto se hodnoty přenesou přes drobný
+        převodník tam a zpět."""
+        if not self.samples:
+            return
+        try:
+            from .dfa import analyzer as core
+        except ImportError:
+            return                       # bez OpenCV se rychlosti nepočítají
+
+        class _Row:                      # jen pole, na která jádro sahá
+            __slots__ = ("time_s", "total_coverage_pct", "haze_coverage_pct",
+                         "mean_signal_adu", "total_particle_count",
+                         "rate_coverage_pct_per_s", "rate_haze_pct_per_s",
+                         "rate_signal_adu_per_s", "rate_particles_per_s", "phase")
+
+        rows = []
+        for sample in self.samples:
+            row = _Row()
+            row.time_s = float(sample.time_s)
+            row.total_coverage_pct = float(sample.coverage_pct)
+            row.haze_coverage_pct = float(sample.haze_pct or 0.0)
+            row.mean_signal_adu = float(sample.mean_signal)
+            row.total_particle_count = float(max(0, sample.particles))
+            row.phase = ""
+            # jádro u jediného měření rychlosti nepočítá – nesmí zůstat prázdné
+            row.rate_coverage_pct_per_s = 0.0
+            row.rate_haze_pct_per_s = 0.0
+            row.rate_signal_adu_per_s = 0.0
+            row.rate_particles_per_s = 0.0
+            rows.append(row)
+
+        core.compute_rates_and_phases(rows)
+        for sample, row in zip(self.samples, rows):
+            sample.rate_coverage = row.rate_coverage_pct_per_s
+            sample.rate_haze = row.rate_haze_pct_per_s
+            sample.rate_signal = row.rate_signal_adu_per_s
+            sample.rate_particles = row.rate_particles_per_s
+            sample.phase = row.phase
 
     def rows(self, channel: Optional[str] = None) -> List["Sample"]:
         """Měření, volitelně jen pro jeden kanál."""

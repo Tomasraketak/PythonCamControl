@@ -94,6 +94,18 @@ def params_from_settings(settings):
 #: FrameMetrics → klíče sloupců tabulky aplikace
 _METRIC_MAP = (
     ("coverage_pct", "total_coverage_pct"),
+    ("area_px", "total_area_px"),
+    ("integrated_signal", "integrated_signal_adu"),
+    ("haze_only_pct", "haze_only_coverage_pct"),
+    ("point_area_px", "point_area_px"),
+    ("point_pct", "point_area_pct"),
+    ("cluster_area_px", "cluster_area_px"),
+    ("cluster_pct", "cluster_area_pct"),
+    ("fiber_area_px", "fiber_area_px"),
+    ("fiber_pct", "fiber_area_pct"),
+    ("median_area_px", "median_particle_area_px"),
+    ("p90_area_px", "p90_particle_area_px"),
+    ("diameter_um", "mean_particle_diameter_um"),
     ("particles", "total_particle_count"),
     ("area_um2", "total_area_um2"),
     ("mean_signal", "mean_signal_adu"),
