@@ -249,7 +249,7 @@ class MainWindow(QMainWindow):
         lay.addSpacing(theme.SPACE_4)
 
         # Dvě obrazovky: snímání u kamery a dávkový rozbor nafocených sérií.
-        self.seg_screen = SegmentedControl(["Kamera", "Rozbor"])
+        self.seg_screen = SegmentedControl(["Kamera", "Analýza"])
         self.seg_screen.setFixedWidth(180)
         self.seg_screen.currentChanged.connect(self.showScreen)
         lay.addWidget(self.seg_screen)
@@ -269,14 +269,9 @@ class MainWindow(QMainWindow):
     def showScreen(self, index: int) -> None:
         """Přepne mezi obrazovkou kamery a obrazovkou rozboru."""
         index = 1 if int(index) else 0
-        if index == 1 and self.analyzer is None:
-            from .analyzer_screen import AnalyzerScreen
-            self.analyzer = AnalyzerScreen(self.settings)
-            self.analyzer.statusMessage.connect(self.statusMessage)
-            placeholder = self.screens.widget(1)
-            self.screens.removeWidget(placeholder)
-            placeholder.deleteLater()
-            self.screens.addWidget(self.analyzer)
+        if index == 1 and self.analyzer is None and not self._buildAnalyzer():
+            self.seg_screen.setCurrentIndex(0, emit=False)
+            return
         self.screens.setCurrentIndex(index)
         # Lišta s přiblížením a panel osvětlení patří ke kameře; u rozboru
         # by jen mátly, protože se týkají živého obrazu.
@@ -287,7 +282,38 @@ class MainWindow(QMainWindow):
         if index == 1 and self.analyzer is not None:
             self.analyzer.refreshFolders()
         self.statusMessage("Obrazovka: "
-                           + ("rozbor sérií" if index else "kamera"), 3000)
+                           + ("analýza sérií" if index else "kamera"), 3000)
+
+    def _buildAnalyzer(self) -> bool:
+        """Postaví obrazovku analýzy. Vrací False, když to nejde.
+
+        Obrazovka táhne OpenCV a celé jádro rozboru, takže se staví až
+        tady – a její vznik trvá i sekundy, proto přesýpací hodiny.
+        Selhání (chybějící OpenCV) se hlásí dialogem, ne pádem: uživatel
+        má dál k dispozici celou práci s kamerou."""
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self.statusMessage("Připravuji analýzu…", 4000)
+        QApplication.processEvents()
+        try:
+            from .analyzer_screen import AnalyzerScreen
+            screen = AnalyzerScreen(self.settings)
+        except Exception as exc:                           # noqa: BLE001
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(
+                self, APP_NAME,
+                "Obrazovku analýzy nejde otevřít:\n{}\n\n"
+                "Nejčastěji chybí knihovna OpenCV – nainstaluje se příkazem\n"
+                "pip install opencv-python".format(exc))
+            self.statusMessage("Analýza není k dispozici: " + str(exc), 8000)
+            return False
+        QApplication.restoreOverrideCursor()
+        self.analyzer = screen
+        self.analyzer.statusMessage.connect(self.statusMessage)
+        placeholder = self.screens.widget(1)
+        self.screens.removeWidget(placeholder)
+        placeholder.deleteLater()
+        self.screens.addWidget(self.analyzer)
+        return True
 
     def _buildMenu(self) -> QMenu:
         menu = QMenu(self)

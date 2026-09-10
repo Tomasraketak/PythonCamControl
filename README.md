@@ -68,7 +68,7 @@ Zdrojový návrh je v [docs/design](docs/design/).
   Soubor se dá přiložit k naměřeným datům, takže je za měsíc jasné, za jakých
   podmínek vznikla. Starší profily, které měly jen vlastnosti kamery, se načtou
   taky. Soubory leží v podsložce `nastavení` uvnitř pracovní složky.
-* **Obrazovka „Rozbor“** – celý [DarkFieldAnalyzer](https://github.com/Tomasraketak/DarkFieldAnalyzer)
+* **Obrazovka „Analýza“** – celý [DarkFieldAnalyzer](https://github.com/Tomasraketak/DarkFieldAnalyzer)
   uvnitř aplikace: výběr složky s měřením, volba reference, srovnání driftu
   sklíčka, všechny parametry rozboru, procházení snímek po snímku s barevnou
   klasifikační maskou, tabulka, souhrn, grafy, export a průvodce metodou.

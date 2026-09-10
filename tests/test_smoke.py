@@ -2211,6 +2211,63 @@ def test_guide_document_follows_the_palette():
         theme.set_mode("light")
 
 
+def test_screen_switch_survives_a_broken_analyzer():
+    """Když obrazovku analýzy nejde postavit, program to řekne a běží dál."""
+    from PyQt5.QtWidgets import QMessageBox
+
+    from bmscam.ui import analyzer_screen
+    from bmscam.ui.main_window import MainWindow
+
+    app = _app()
+    win = MainWindow(prefer_demo=True)
+    original = analyzer_screen.AnalyzerScreen
+    warnings = []
+    original_warning = QMessageBox.warning
+    QMessageBox.warning = staticmethod(
+        lambda *args, **kwargs: warnings.append(args[2]) or QMessageBox.Ok)
+    try:
+        class Broken:
+            def __init__(self, *args, **kwargs):
+                raise ImportError("libGL.so.1: cannot open shared object file")
+
+        analyzer_screen.AnalyzerScreen = Broken
+        win.showScreen(1)
+        app.processEvents()
+        assert win.analyzer is None
+        assert win.screens.currentIndex() == 0, "zůstalo se u kamery"
+        assert win.seg_screen.currentIndex() == 0
+        assert warnings and "OpenCV" in warnings[0]
+
+        # po opravě prostředí se obrazovka postaví normálně
+        analyzer_screen.AnalyzerScreen = original
+        win.showScreen(1)
+        app.processEvents()
+        assert win.analyzer is not None
+        assert win.screens.currentIndex() == 1
+    finally:
+        QMessageBox.warning = original_warning
+        analyzer_screen.AnalyzerScreen = original
+        win.close()
+
+
+def test_opencv_preload_runs_before_qt():
+    """Spouštěč načte OpenCV dřív, než vznikne QApplication."""
+    import subprocess
+
+    from bmscam import qtenv
+
+    assert qtenv.preload_opencv() is None or True     # jen nesmí spadnout
+
+    code = ("import sys;"
+            " from bmscam import qtenv;"
+            " err = qtenv.preload_opencv();"
+            " from PyQt5.QtWidgets import QApplication;"
+            " print('cv2' in sys.modules, QApplication.instance() is None)")
+    out = subprocess.run([sys.executable, "-c", code], cwd=_ROOT,
+                         capture_output=True, text=True)
+    assert out.stdout.strip() == "True True", out.stdout + out.stderr
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

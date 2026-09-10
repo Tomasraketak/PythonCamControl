@@ -32,9 +32,9 @@ tmavé a všechno, co na něm ulpí, rozptyluje světlo a svítí.
    s průběhem. Zastavení měření tabulku uloží do CSV samo a další spuštění
    začne s prázdnou řadou.
 
-## Obrazovka „Rozbor“
+## Obrazovka „Analýza“
 
-Nahoře v okně je přepínač **Kamera / Rozbor**. Druhá obrazovka je celý
+Nahoře v okně je přepínač **Kamera / Analýza**. Druhá obrazovka je celý
 DarkFieldAnalyzer přenesený dovnitř aplikace – nemusíte tedy pouštět dva
 programy:
 
@@ -86,7 +86,7 @@ Metoda je převzatá z projektu
 Pokrytí tedy nově zahrnuje i difuzní opar – proto vychází vyšší než ve
 starší verzi, která hlásila jen plochu nad prostým prahem.
 
-Živé měření u kamery volá stejné jádro jako obrazovka *Rozbor* (jen pro
+Živé měření u kamery volá stejné jádro jako obrazovka *Analýza* (jen pro
 jeden snímek), takže se čísla z obou cest dají porovnávat.
 
 Bez OpenCV se použije původní jednodušší metoda (prostý práh nad

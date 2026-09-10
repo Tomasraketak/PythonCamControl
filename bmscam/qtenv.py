@@ -79,6 +79,28 @@ def apply_library_path() -> None:
         QCoreApplication.addLibraryPath(directory)
 
 
+def preload_opencv() -> Optional[str]:
+    """Načte OpenCV **ještě před** vznikem QApplication a srovná cesty Qt.
+
+    Balíček ``opencv-python`` si veze vlastní knihovny Qt. Když se ``cv2``
+    naimportuje až za běhu (po vzniku okna), natáhne je do procesu vedle
+    už běžícího PyQt5 – na Windows to končí tuhým pádem bez hlášky, ne
+    výjimkou. Proto se import udělá jednou na začátku, kdy ještě žádné
+    okno neexistuje, a hned poté se cesty k zásuvným modulům vrátí na ty
+    z PyQt5 (``cv2`` si je při importu přepisuje).
+
+    Vrací text chyby, když OpenCV chybí nebo se nedá načíst; ``None``
+    znamená, že je vše připravené. Aplikace běží i bez OpenCV – jen bez
+    rozboru snímků a bez záznamu videa."""
+    try:
+        import cv2                                        # noqa: F401
+    except Exception as exc:                              # noqa: BLE001
+        return str(exc)
+    finally:
+        prepare()                                         # cv2 si je přepsalo
+    return None
+
+
 def report() -> List[str]:
     """Řádky s diagnostikou prostředí Qt (pro přepínač --doctor)."""
     def item(name, value):

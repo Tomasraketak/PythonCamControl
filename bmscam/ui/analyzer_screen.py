@@ -1,4 +1,4 @@
-"""Obrazovka „Rozbor“ – dávkový rozbor nafocených sérií.
+"""Obrazovka „Analýza“ – dávkové vyhodnocení nafocených sérií.
 
 Portováno z aplikace DarkFieldAnalyzer (`gui.py`, revize 5353d84) do
 PyQt5 a do vzhledu BMS Cam Control. Výpočty se nekopírovaly: volá se
@@ -11,7 +11,7 @@ Obrazovka umí totéž co původní program:
 * zvolit referenční pozadí – z prvních snímků série, nebo ze souborů
   `reference/*.npz`, které ukládá záznamová část této aplikace,
 * srovnat drift sklíčka podle „souhvězdí“ prachových částic,
-* nastavit všechny prahy rozboru,
+* nastavit všechny prahy analýzy,
 * projít výsledek snímek po snímku s barevnou klasifikační maskou,
 * uložit tabulku CSV, souhrn JSON a souhrnné grafy,
 * načíst dřív uloženou analýzu (CSV) bez opakovaného počítání,
@@ -61,7 +61,7 @@ CROP_CHOICES = (("auto", "podle driftu"), ("fixed", "pevných 90 %"), ("none", "
 
 
 class AnalysisWorker(QThread):
-    """Rozbor série ve vlastním vlákně, aby okno nezamrzlo."""
+    """Analýza série ve vlastním vlákně, aby okno nezamrzlo."""
 
     progress_signal = pyqtSignal(int, int, object)
     finished_signal = pyqtSignal(object)
@@ -89,7 +89,7 @@ class AnalysisWorker(QThread):
 
 
 class AnalyzerScreen(QWidget):
-    """Celá obrazovka rozboru: vlevo nastavení, vpravo výsledky."""
+    """Celá obrazovka analýzy: vlevo nastavení, vpravo výsledky."""
 
     statusMessage = pyqtSignal(str, int)
 
@@ -198,7 +198,7 @@ class AnalyzerScreen(QWidget):
         lay.addWidget(card)
 
         # --- 2. parametry
-        card = Card("3 · Parametry rozboru")
+        card = Card("3 · Parametry analýzy")
         self.cmb_binning = QComboBox()
         for value, title in BINNING_CHOICES:
             self.cmb_binning.addItem(title, value)
@@ -290,7 +290,7 @@ class AnalyzerScreen(QWidget):
 
         # --- 3. spuštění
         card = Card("4 · Spuštění a export")
-        self.btn_start = button("Spustit rozbor", "primary", "aperture")
+        self.btn_start = button("Spustit analýzu", "primary", "aperture")
         self.btn_start.clicked.connect(self.startAnalysis)
         self.btn_stop = button("Zastavit", "secondary")
         self.btn_stop.setEnabled(False)
@@ -348,7 +348,7 @@ class AnalyzerScreen(QWidget):
         graphs = QWidget()
         graph_lay = QVBoxLayout(graphs)
         graph_lay.setContentsMargins(0, 0, 0, 0)
-        self.lbl_graphs = QLabel("Grafy se vykreslí po dokončení rozboru.")
+        self.lbl_graphs = QLabel("Grafy se vykreslí po dokončení analýzy.")
         self.lbl_graphs.setAlignment(Qt.AlignCenter)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -389,7 +389,13 @@ class AnalyzerScreen(QWidget):
         if not os.path.isdir(self.base_dir):
             self.lbl_status.setText("Zvolená složka neexistuje.")
             return
-        folders = frameio.list_measurement_folders(self.base_dir)
+        # Procházení stromu se snímky může na síťovém disku chvíli trvat;
+        # chyba čtení (práva, odpojený disk) nesmí obrazovku shodit.
+        try:
+            folders = frameio.list_measurement_folders(self.base_dir)
+        except OSError as exc:
+            self.lbl_status.setText(f"Složku nejde přečíst: {exc}")
+            return
         for index, (path, count) in enumerate(folders):
             self.tbl_folders.insertRow(index)
             name = os.path.basename(path) or path
@@ -461,7 +467,7 @@ class AnalyzerScreen(QWidget):
 
     # ---------------------------------------------------------- parametry ---
     def params(self):
-        """Parametry rozboru podle ovládacích prvků."""
+        """Parametry analýzy podle ovládacích prvků."""
         roi = None
         if self.chk_roi.isChecked():
             values = [int(spin.value()) for spin in self.spin_roi]
@@ -518,12 +524,12 @@ class AnalyzerScreen(QWidget):
             return
         folder = self.selected_folder
         if not folder or not os.path.isdir(folder):
-            QMessageBox.information(self, "Rozbor",
+            QMessageBox.information(self, "Analýza",
                                     "Nejdřív vyberte složku se snímky.")
             return
         paths = frameio.list_image_files(folder)
         if not paths:
-            QMessageBox.information(self, "Rozbor",
+            QMessageBox.information(self, "Analýza",
                                     "Ve složce nejsou žádné snímky.")
             return
         self.progress.setRange(0, len(paths))
@@ -540,7 +546,7 @@ class AnalyzerScreen(QWidget):
     def stopAnalysis(self) -> None:
         if self.worker is not None:
             self.worker.cancel()
-            self.lbl_status.setText("Ruším rozbor…")
+            self.lbl_status.setText("Ruším analýzu…")
 
     def _onProgress(self, done: int, total: int, _metrics) -> None:
         self.progress.setRange(0, max(1, total))
@@ -550,8 +556,8 @@ class AnalyzerScreen(QWidget):
     def _onError(self, message: str, details: str) -> None:
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
-        box = QMessageBox(QMessageBox.Critical, "Rozbor",
-                          f"Rozbor selhal:\\n{message}", QMessageBox.Ok, self)
+        box = QMessageBox(QMessageBox.Critical, "Analýza",
+                          f"Analýza selhala:\\n{message}", QMessageBox.Ok, self)
         box.setDetailedText(details)
         box.exec_()
 
@@ -573,9 +579,9 @@ class AnalyzerScreen(QWidget):
             "Hotovo: {} snímků za {:.1f} s{}".format(
                 len(metrics), result.elapsed_s, note))
         self.statusMessage.emit(
-            f"Rozbor dokončen: {len(metrics)} snímků", 6000)
+            f"Analýza dokončena: {len(metrics)} snímků", 6000)
         if result.warnings:
-            QMessageBox.warning(self, "Rozbor",
+            QMessageBox.warning(self, "Analýza",
                                 "\\n".join(str(w) for w in result.warnings[:8]))
 
     # ------------------------------------------------------------ výstupy ---
@@ -683,17 +689,17 @@ class AnalyzerScreen(QWidget):
             folder, "analyza_{}_{}.csv".format(
                 name, datetime.now().strftime("%Y%m%d_%H%M%S")))
         path, _ = QFileDialog.getSaveFileName(
-            self, "Uložit výsledky rozboru", default, "CSV (*.csv)")
+            self, "Uložit výsledky analýzy", default, "CSV (*.csv)")
         if not path:
             return
         try:
             written = exporter.export_all(self.result, path, folder_name=name)
         except Exception as exc:                            # noqa: BLE001
-            QMessageBox.warning(self, "Rozbor",
+            QMessageBox.warning(self, "Analýza",
                                 f"Uložení selhalo:\\n{exc}")
             return
         QMessageBox.information(
-            self, "Rozbor",
+            self, "Analýza",
             "Uloženo:\\n" + "\\n".join(str(v) for v in written.values()))
 
     def loadFinished(self) -> None:
@@ -706,10 +712,10 @@ class AnalyzerScreen(QWidget):
         try:
             header, rows = self._readCsv(path)
         except OSError as exc:
-            QMessageBox.warning(self, "Rozbor", f"Soubor nejde přečíst:\\n{exc}")
+            QMessageBox.warning(self, "Analýza", f"Soubor nejde přečíst:\\n{exc}")
             return
         if not rows:
-            QMessageBox.information(self, "Rozbor",
+            QMessageBox.information(self, "Analýza",
                                     "V souboru nejsou žádné řádky s daty.")
             return
         self.tbl_results.setColumnCount(len(header))
@@ -762,7 +768,7 @@ class AnalyzerScreen(QWidget):
                 pass
 
     def saveState(self) -> None:
-        """Uloží nastavení rozboru (volá hlavní okno při zavření)."""
+        """Uloží nastavení analýzy (volá hlavní okno při zavření)."""
         data = {}
         for key, widget in self._persisted().items():
             if isinstance(widget, QComboBox):

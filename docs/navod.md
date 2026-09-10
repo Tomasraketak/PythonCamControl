@@ -284,9 +284,9 @@ aplikace po zastavení sama nabídne dopočítat celé měření z uložených s
 
 ---
 
-## 7. Obrazovka Rozbor (dávkové vyhodnocení)
+## 7. Obrazovka Analýza (dávkové vyhodnocení)
 
-Přepínač **Kamera / Rozbor** nahoře v okně. Na obrazovce *Rozbor* se
+Přepínač **Kamera / Analýza** nahoře v okně. Na obrazovce *Analýza* se
 vyhodnocují už nafocené série – je to celý program DarkFieldAnalyzer
 přenesený do aplikace, takže nemusíte spouštět dva.
 
@@ -298,13 +298,18 @@ přenesený do aplikace, takže nemusíte spouštět dva.
    částice počítají jako nová kontaminace.
 3. **Parametry** – binning, prahy, hranice shluku a vlákna, ROI, měřítko,
    počet vláken procesoru. *Obnovit výchozí hodnoty* vrátí doporučené.
-4. **Spustit rozbor** – běží ve vlastním vlákně, průběh ukazuje pruh a dá
+4. **Spustit analýzu** – běží ve vlastním vlákně, průběh ukazuje pruh a dá
    se zastavit.
 5. Výsledek je vpravo v záložkách: **Snímky** (procházení snímek po snímku
    s barevnou maskou), **Tabulka**, **Souhrn**, **Grafy** a **Průvodce**
    s výkladem metody.
 6. **Uložit výsledky…** zapíše CSV, JSON souhrn i PNG s grafy.
    **Načíst hotovou…** zobrazí dřív uloženou tabulku bez počítání.
+
+Obrazovka se staví až při prvním otevření – natahuje se s ní OpenCV a celé
+jádro rozboru, takže první přepnutí chvíli trvá (kurzor se změní na
+přesýpací hodiny). Když OpenCV chybí nebo se nedá načíst, aplikace to
+napíše v dialogu a zůstane u kamery; nic nespadne.
 
 Souhrnné grafy potřebují knihovnu `matplotlib`; bez ní funguje všechno
 ostatní a v záložce *Grafy* se objeví vysvětlení.

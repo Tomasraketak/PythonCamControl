@@ -64,6 +64,10 @@ def main(argv=None) -> int:
         QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
         QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
+    # OpenCV se musí načíst dřív než Qt: veze si vlastní knihovny Qt a při
+    # pozdějším importu (třeba při přepnutí na obrazovku Analýza) by je
+    # natáhlo vedle běžícího PyQt5 – na Windows to proces rovnou shodí.
+    cv2_error = qtenv.preload_opencv()
     qtenv.apply_library_path()
     try:
         app = QApplication(sys.argv[:1])
@@ -78,6 +82,10 @@ def main(argv=None) -> int:
 
     win = MainWindow(prefer_demo=args.demo, include_demo=not args.no_demo)
     win.show()
+    if cv2_error:
+        win.statusMessage("OpenCV se nepodařilo načíst – rozbor snímků a "
+                          "záznam videa nebudou k dispozici ({})"
+                          .format(cv2_error), 12000)
     if args.connect or args.demo:
         win.connectCamera()
     return app.exec_()
