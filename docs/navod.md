@@ -219,6 +219,21 @@ je jen shrnutí kroků:
 5. Další **Spustit měření** začíná s prázdnou tabulkou i grafem – předchozí
    řada je už uložená.
 
+### Vzorek a rozbor
+
+Nahoře v záložce *Dark* vyberte **materiál** (epoxid vytvrzený nebo
+nevytvrzený, PLA, PETG, kaptonová páska) a **teplotu**, na kterou vzorek
+zahříváte. Obojí se propíše do názvu složky se snímky, názvu CSV, hlavičky
+tabulky, popisku grafu i do názvu uložené reference – po měsíci tak jde
+poznat, co které měření bylo.
+
+Samotný rozbor je převzatý z [DarkFieldAnalyzeru](https://github.com/Tomasraketak/DarkFieldAnalyzer):
+odděluje difuzní opar od ostrých částic, práh počítá z šumu měřeného mezi
+sousedními pixely a částice třídí na mikročástice, shluky a vlákna. Tabulka
+proto má i sloupce *Opar*, *Mikročástic*, *Shluků*, *Vláken*, *Poměr S/Š*
+a *Čistota* (0–100 %, souhrnné skóre). Podrobně v
+[darkfield.md](darkfield.md).
+
 ### Měření po kanálech
 
 Zaškrtávátko **Postupně po kanálech (R → G → B)** přepne měření na tři

@@ -32,6 +32,51 @@ tmavé a všechno, co na něm ulpí, rozptyluje světlo a svítí.
    s průběhem. Zastavení měření tabulku uloží do CSV samo a další spuštění
    začne s prázdnou řadou.
 
+## Jak se snímek vyhodnocuje
+
+Metoda je převzatá z projektu
+[DarkFieldAnalyzer](https://github.com/Tomasraketak/DarkFieldAnalyzer)
+(`analyzer.py`, `imageops.py`), kde se odladila na skutečných sériích.
+Řetězec jednoho (zprůměrovaného) snímku:
+
+1. **Rozdíl proti referenci** ve float32 a **bez ořezu na nulu** – záporná
+   část je jediný nezkreslený odhad šumu.
+2. **Binning.** Velký snímek se průměrováním 2×2 (nad 2400 px výšky 4×4)
+   zmenší na zhruba 1200 px. Nic se nezahazuje náhodně, zlepší se poměr
+   signál/šum a rozbor 4K snímku trvá ~0,2 s místo ~1 s.
+3. **Oddělení oparu.** Nízkofrekvenční složka (kondenzace, zamlžení) se
+   odhadne na silně zmenšeném obraze morfologickým otevřením a Gaussem,
+   takže ji bodové částice neznečistí. `sharp = rozdíl − opar`.
+4. **Práh z ostré složky.** Šum se odhaduje z **rozdílů sousedních
+   pixelů** (MAD × 1,4826 / √2), ne z celkového rozdělení. Struktura scény
+   (zaschlý film, rozostřené halo) tak práh nevyžene nahoru. Práh nikdy
+   neklesne pod `min_threshold_adu` (1,5 ADU).
+5. **Segmentace** `connectedComponentsWithStats` s `CV_32S`.
+6. **Klasifikace** z momentů druhého řádu na **mikročástice**, **shluky**
+   (nad 100 px) a **vlákna** (protáhlost ≥ 2,8 a délka ≥ 12 px). Šikmé
+   vlákno pod 45° tak není shluk.
+7. **Metriky**: pokrytí (částice **i** opar), počty podle druhu, plocha,
+   signál, poměr S/Š, nehomogenita, ostrost (rozptyl Laplaciánu) a
+   souhrnné **skóre čistoty** 0–100 %.
+
+Pokrytí tedy nově zahrnuje i difuzní opar – proto vychází vyšší než ve
+starší verzi, která hlásila jen plochu nad prostým prahem.
+
+Bez OpenCV se použije původní jednodušší metoda (prostý práh nad
+rozdílem); ve sloupci `method` v CSV je vidět, která se počítala.
+
+## Vzorek: materiál a teplota
+
+Karta **Vzorek** nahoře v záložce *Dark*: materiál (epoxid vytvrzený /
+nevytvrzený, PLA, PETG, kaptonová páska) a teplota, na kterou je vzorek
+zahříván. Údaje se propíšou do:
+
+* názvu složky se snímky – `darkfield_20260910_101500_pla_120C`,
+* názvu CSV – `kontaminace_20260910_101500_pla_120C.csv`,
+* hlavičky CSV (`# vzorek  PLA · 120 °C`) a uloženého nastavení,
+* názvu automaticky uložené reference,
+* popisku grafu a titulku okna s tabulkou.
+
 ## Měření po kanálech (R → G → B)
 
 Kamera je černobílá, ale osvětlení umí svítit jen jednou složkou RGB.

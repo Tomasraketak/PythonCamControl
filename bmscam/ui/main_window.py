@@ -1015,6 +1015,9 @@ class MainWindow(QMainWindow):
     def _biasNote(self) -> str:
         """Jednořádkový popis podmínek, za kterých reference vznikla."""
         parts = [datetime.now().strftime("%d.%m.%Y %H:%M:%S")]
+        sample = self.df_panel.sampleLabel()
+        if sample:
+            parts.append(sample)
         if self.camera is not None:
             for key, title in self.EXPO_WATCHED:
                 if key not in self.specs:
@@ -1047,7 +1050,9 @@ class MainWindow(QMainWindow):
         note = self._biasNote()
         try:
             os.makedirs(folder, exist_ok=True)
-            path = os.path.join(folder, f"reference_{stamp}.npz")
+            tag = self.df_panel.sampleTag()
+            suffix = f"_{tag}" if tag else ""
+            path = os.path.join(folder, f"reference_{stamp}{suffix}.npz")
             bias.save(path, note)
             data = workspace.new(
                 camera=self._cameraSettings(),
@@ -1056,15 +1061,21 @@ class MainWindow(QMainWindow):
                 capture=self._captureSettings())
             data["reference"] = {"file": os.path.basename(path), "note": note,
                                  "describe": bias.describe()}
-            workspace.save(os.path.join(folder, f"reference_{stamp}.json"), data)
+            workspace.save(
+                os.path.join(folder, f"reference_{stamp}{suffix}.json"), data)
         except (OSError, ValueError) as exc:
             self.statusMessage(f"Referenci se nepodařilo uložit: {exc}", 8000)
             return
         self.statusMessage("Reference uložena: " + path, 8000)
 
     def _makeDarkFieldDir(self) -> str:
-        """Každé měření dostane vlastní podsložku – stejně jako časosběr."""
-        base = os.path.join(self._ensureDir(), f"darkfield_{self._stamp()}")
+        """Každé měření dostane vlastní podsložku – stejně jako časosběr.
+
+        V názvu je i vzorek (materiál a teplota), aby se složky daly
+        rozeznat bez otevírání."""
+        tag = self.df_panel.sampleTag()
+        name = f"darkfield_{self._stamp()}" + (f"_{tag}" if tag else "")
+        base = os.path.join(self._ensureDir(), name)
         folder, index = base, 2
         while os.path.exists(folder):
             folder = f"{base}_{index}"

@@ -1953,6 +1953,117 @@ def test_theme_hooks_do_not_keep_widgets_alive():
     assert len(theme._hooks) == before
 
 
+def test_dfa_analysis_separates_haze_particles_and_fibers():
+    """Rozbor převzatý z DarkFieldAnalyzeru rozliší opar, částice a vlákna."""
+    import numpy as np
+
+    from bmscam import darkfield as df, dfa
+
+    if not dfa.available():                     # bez OpenCV se test nedá udělat
+        return
+
+    rng = np.random.default_rng(4)
+    clean = rng.normal(20.0, 1.5, (600, 800)).astype(np.float32)
+    bias = df.Bias(clean.copy(), 8)
+
+    frame = clean.copy()
+    frame[200:206, 300:306] += 60.0             # kompaktní částice
+    frame[400:404, 100:200] += 45.0             # vlákno / škrábanec
+    frame[:, :] += 0.0
+    image = np.clip(frame, 0, 255).astype(np.uint8)
+
+    settings = df.Settings(sigma=5.0, min_area_px=3)
+    metrics = df.analyze(image, bias, settings)
+    assert metrics["method"] == df.METHOD_DFA
+    assert metrics["fibers"] >= 1, metrics
+    assert metrics["points"] >= 1, metrics
+    assert metrics["threshold"] >= settings.min_threshold_adu
+    assert 0.0 <= metrics["cleanliness"] <= 100.0
+
+    # difuzní zamlžení: plošný nárůst přes celý snímek se pozná jako opar,
+    # ne jako obrovská částice
+    hazy = np.clip(clean + 9.0, 0, 255).astype(np.uint8)
+    haze_metrics = df.analyze(hazy, bias, settings)
+    assert haze_metrics["haze_pct"] > 50.0, haze_metrics
+    assert haze_metrics["haze_mean"] > 4.0
+    assert haze_metrics["coverage_pct"] > 50.0
+    assert haze_metrics["cleanliness"] < metrics["cleanliness"]
+
+    # velký snímek se před rozborem zmenší (binning), jinak by segmentace
+    # šumu na 4K trvala vteřiny
+    from bmscam import dfa as _dfa
+    assert _dfa.resolve_binning(2160) == 2 and _dfa.resolve_binning(720) == 1
+    assert metrics.get("binning") == 1        # 600 px vysoký snímek se nezmenšuje
+
+    # čisté sklíčko: skoro nulové pokrytí, vysoká čistota
+    quiet = np.clip(clean + rng.normal(0, 1.5, clean.shape), 0, 255).astype(np.uint8)
+    empty = df.analyze(quiet, bias, settings)
+    assert empty["coverage_pct"] < 1.0, empty
+    assert empty["cleanliness"] > 90.0
+
+
+def test_analysis_falls_back_without_opencv():
+    """Bez OpenCV se použije jednoduchá metoda, měření se nezastaví."""
+    import numpy as np
+
+    from bmscam import darkfield as df
+
+    image = np.full((80, 100), 20, np.uint8)
+    image[30:36, 40:46] = 200
+    bias = df.Bias(np.full((80, 100), 20.0, np.float32), 4)
+    metrics = df.analyze(image, bias, df.Settings(method=df.METHOD_SIMPLE))
+    assert metrics["method"] == df.METHOD_SIMPLE
+    assert metrics["coverage_pct"] > 0.0
+
+
+def test_sample_material_and_temperature_reach_names_and_graphs():
+    """Materiál a teplota se dostanou do názvů souborů, CSV i grafu."""
+    import shutil
+    import tempfile
+
+    from bmscam import darkfield as df
+    from bmscam.ui.main_window import MainWindow
+
+    _app()
+    folder = tempfile.mkdtemp()
+    win = MainWindow(prefer_demo=True)
+    try:
+        win.save_dir = folder
+        panel = win.df_panel
+        index = panel.cmb_material.findData("pla")
+        assert index > 0, "materiál PLA v nabídce chybí"
+        panel.cmb_material.setCurrentIndex(index)
+        panel.spin_temp.setValue(120.0)
+        assert panel.sampleTag() == "pla_120C"
+        assert panel.sampleLabel() == "PLA · 120 °C"
+        assert panel.settings().material == "pla"
+        assert panel.settings().temperature_c == 120.0
+
+        # složka měření i CSV nesou značku vzorku
+        directory = win._makeDarkFieldDir()
+        assert os.path.basename(directory).endswith("_pla_120C"), directory
+        panel.addSample({"coverage_pct": 1.0, "particles": 2,
+                         "particle_area_px": 10, "threshold": 5.0})
+        csv_path = panel.autoSaveSeries(folder)
+        assert "pla_120C" in os.path.basename(csv_path), csv_path
+        with open(csv_path, encoding="utf-8-sig") as fh:
+            head = fh.read(2000)
+        assert "PLA · 120 °C" in head
+
+        # graf i titulek okna vzorek pojmenují
+        panel.showTable()
+        window = panel.window_
+        assert "PLA" in window.windowTitle() or "PLA" in window._chartTitle("Pokrytí")
+
+        # a uložené nastavení si materiál i teplotu pamatuje
+        panel.applySettings({"material": "kapton", "temperature_c": 80.0})
+        assert panel.sampleTag() == "kapton_80C"
+        assert df.material_title("kapton") == "Kaptonová páska"
+    finally:
+        win.close()
+        shutil.rmtree(folder, ignore_errors=True)
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

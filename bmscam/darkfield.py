@@ -26,6 +26,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from . import dfa
+
 #: režimy prahu
 THRESHOLD_SIGMA = "sigma"
 THRESHOLD_ABSOLUTE = "absolute"
@@ -62,7 +64,68 @@ COLUMNS: Sequence[Tuple[str, str, str]] = (
     ("max_signal",     "Maximum",            "ADU"),
     ("bg_sigma",       "Šum pozadí",         "ADU"),
     ("threshold",      "Práh",               "ADU"),
+    # metriky metody DarkFieldAnalyzer (u jednoduché metody zůstanou prázdné)
+    ("haze_pct",       "Opar",               "%"),
+    ("haze_mean",      "Opar průměr",        "ADU"),
+    ("points",         "Mikročástic",        ""),
+    ("clusters",       "Shluků",             ""),
+    ("fibers",         "Vláken",             ""),
+    ("fiber_len_px",   "Délka vláken",       "px"),
+    ("density_mpx",    "Hustota částic",     "1/Mpx"),
+    ("mean_area_px",   "Průměrná částice",   "px"),
+    ("snr",            "Poměr S/Š",          ""),
+    ("heterogeneity_pct", "Nehomogenita",    "%"),
+    ("focus",          "Ostrost",            ""),
+    ("cleanliness",    "Čistota",            "%"),
 )
+
+#: metody rozboru
+METHOD_DFA = "dfa"          # port z projektu DarkFieldAnalyzer (potřebuje OpenCV)
+METHOD_SIMPLE = "simple"    # původní jednoduchý práh nad rozdílem
+
+#: Zkoumané materiály. Klíč je i součástí názvů souborů, proto bez diakritiky.
+MATERIALS: Sequence[Tuple[str, str]] = (
+    ("", "Neuvedeno"),
+    ("epoxid-vytvrzeny", "Epoxid vytvrzený"),
+    ("epoxid-nevytvrzeny", "Epoxid nevytvrzený"),
+    ("pla", "PLA"),
+    ("petg", "PETG"),
+    ("kapton", "Kaptonová páska"),
+)
+
+
+def material_title(key: str) -> str:
+    """Popisek materiálu podle klíče."""
+    for item, title in MATERIALS:
+        if item == key:
+            return title
+    return str(key)
+
+
+def sample_tag(material: str = "", temperature_c: float = 0.0) -> str:
+    """Značka vzorku do názvů složek a souborů, např. ``pla_120C``.
+
+    Bez diakritiky a mezer, aby cesta prošla i tam, kde si Windows na
+    kódování potrpí."""
+    parts = []
+    if material:
+        parts.append(str(material))
+    if temperature_c:
+        value = float(temperature_c)
+        text = ("{:.0f}".format(value) if abs(value - round(value)) < 0.05
+                else "{:.1f}".format(value).replace(".", "-"))
+        parts.append(f"{text}C")
+    return "_".join(parts)
+
+
+def sample_label(material: str = "", temperature_c: float = 0.0) -> str:
+    """Popisek vzorku do grafů a hlaviček, např. „PLA · 120 °C“."""
+    parts = []
+    if material:
+        parts.append(material_title(material))
+    if temperature_c:
+        parts.append("{:g} °C".format(float(temperature_c)))
+    return " · ".join(parts)
 
 
 class Settings:
@@ -80,6 +143,18 @@ class Settings:
         self.store_frames: bool = True      # ukládat snímky pro zpětný rozbor
         self.queue_mb: int = 3072           # kolik RAM smí zabrat fronta rozboru
         self.stack_frames: int = 5          # kolik snímků zprůměrovat do měření
+        # metoda rozboru a její prahy (viz bmscam/dfa.py)
+        self.method: str = METHOD_DFA
+        self.min_threshold_adu: float = 1.5   # dolní mez prahu (pod ní 8bit nemá smysl)
+        self.haze_threshold: float = 4.0      # práh difuzního zamlžení nad referencí
+        self.cluster_min_area_px: int = 100   # od téhle plochy je objekt shluk
+        self.fiber_aspect_ratio: float = 2.8  # protáhlost, od které jde o vlákno
+        self.fiber_min_length_px: int = 12    # minimální délka vlákna
+        self.saturation_adu: float = 250.0    # hranice přesyceného pixelu
+        self.binning: int = 0                 # 0 = zvolit podle rozlišení
+        # zkoumaný vzorek – jde do názvů souborů, grafů i hlaviček CSV
+        self.material: str = ""
+        self.temperature_c: float = 0.0
         self.multichannel: bool = False     # měřit postupně pod R, G a B
         self.settle_ms: int = 400           # co počkat po přepnutí barvy
         # násobek expozičního času a posun ostření pro každý kanál
@@ -333,7 +408,8 @@ class Sample:
             elif key == "particles":
                 # -1 = bez OpenCV se částice nepočítají
                 out.append("–" if int(value) < 0 else f"{int(value)}")
-            elif key in ("index", "particle_area_px"):
+            elif key in ("index", "particle_area_px", "points", "clusters",
+                         "fibers", "max_area_px", "saturated_px"):
                 out.append(f"{int(value)}")
             elif key == "clock":
                 out.append(str(value))
@@ -423,7 +499,31 @@ def background_stats(diff: np.ndarray) -> Tuple[float, float]:
 
 def analyze(gray: np.ndarray, bias: Optional[Bias],
             settings: Settings) -> Dict[str, float]:
-    """Porovná snímek s referencí a spočítá metriky kontaminace."""
+    """Porovná snímek s referencí a spočítá metriky kontaminace.
+
+    Výchozí je metoda převzatá z projektu DarkFieldAnalyzer (oddělení
+    oparu, práh z ostré složky, klasifikace částic – viz :mod:`bmscam.dfa`).
+    Když OpenCV chybí, spočítá se jednodušší původní rozbor, aby měření
+    běželo dál; do metrik se to zapíše polem ``method``."""
+    if getattr(settings, "method", METHOD_DFA) == METHOD_DFA and dfa.available():
+        reference = None if bias is None else bias.mean
+        if reference is not None and reference.shape[:2] != np.asarray(gray).shape[:2]:
+            raise ValueError(
+                "Referenční snímek má jiné rozlišení ({}×{}) než obraz "
+                "({}×{}). Pořiďte referenci znovu."
+                .format(reference.shape[1], reference.shape[0],
+                        np.asarray(gray).shape[1], np.asarray(gray).shape[0]))
+        metrics = dfa.analyze_frame(gray, reference, settings)
+        metrics["method"] = METHOD_DFA
+        return metrics
+    metrics = analyze_simple(gray, bias, settings)
+    metrics["method"] = METHOD_SIMPLE
+    return metrics
+
+
+def analyze_simple(gray: np.ndarray, bias: Optional[Bias],
+                   settings: Settings) -> Dict[str, float]:
+    """Původní jednoduchý rozbor: rozdíl, práh nad šumem, počet částic."""
     gray = np.asarray(gray, dtype=np.float32)
     if bias is not None:
         if bias.mean.shape != gray.shape:
@@ -531,6 +631,10 @@ class Series:
             if bias is not None:
                 writer.writerow(["# reference", bias.describe()])
             if settings is not None:
+                label = sample_label(settings.material, settings.temperature_c)
+                if label:
+                    writer.writerow(["# vzorek", label])
+            if settings is not None:
                 for key, value in sorted(settings.to_dict().items()):
                     writer.writerow([f"# {key}", value])
             writer.writerow([f"{title} [{unit}]" if unit else title
@@ -539,9 +643,11 @@ class Series:
                 writer.writerow(sample.as_row())
 
 
-def default_csv_name(folder: str) -> str:
+def default_csv_name(folder: str, tag: str = "") -> str:
+    """Název CSV; ``tag`` je značka vzorku (materiál a teplota)."""
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return os.path.join(folder, f"kontaminace_{stamp}.csv")
+    suffix = f"_{tag}" if tag else ""
+    return os.path.join(folder, f"kontaminace_{stamp}{suffix}.csv")
 
 
 # ------------------------------------------------------------------ archiv --

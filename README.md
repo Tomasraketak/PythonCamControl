@@ -68,6 +68,13 @@ Zdrojový návrh je v [docs/design](docs/design/).
   Soubor se dá přiložit k naměřeným datům, takže je za měsíc jasné, za jakých
   podmínek vznikla. Starší profily, které měly jen vlastnosti kamery, se načtou
   taky. Soubory leží v podsložce `nastavení` uvnitř pracovní složky.
+* **Rozbor podle DarkFieldAnalyzeru** – metoda je převzatá z projektu
+  [DarkFieldAnalyzer](https://github.com/Tomasraketak/DarkFieldAnalyzer):
+  binning, oddělení difuzního oparu, práh z šumu měřeného mezi sousedními
+  pixely, klasifikace na mikročástice / shluky / vlákna a skóre čistoty.
+* **Vzorek v datech** – materiál (epoxid vytvrzený i nevytvrzený, PLA, PETG,
+  kaptonová páska) a teplota vzorku se propíšou do názvů složek a souborů,
+  hlavičky CSV i popisků grafu.
 * **Průměrování snímků** – jedno měření temného pole vzniká z průměru
   několika snímků (výchozích pět za pět sekund); ukládá se a vyhodnocuje
   jen ten zprůměrovaný PNG, čímž šum senzoru klesne na 45 %.

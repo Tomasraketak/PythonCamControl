@@ -128,6 +128,7 @@ class DarkFieldWindow(QDialog):
         super().__init__(panel)
         self.panel = panel
         self.setWindowTitle("Průběh kontaminace")
+        panel.sampleChanged.connect(self._updateTitle)
         self.setWindowFlags(self.windowFlags() | Qt.Window)
         self.resize(920, 620)
 
@@ -198,10 +199,20 @@ class DarkFieldWindow(QDialog):
                   if c in df.CHANNEL_COLORS else theme.ACCENT),
                  df.CHANNEL_TITLES.get(c, c)) for c in channels]
 
+    def _updateTitle(self) -> None:
+        sample = self.panel.sampleLabel()
+        self.setWindowTitle("Průběh kontaminace"
+                            + (f" – {sample}" if sample else ""))
+
+    def _chartTitle(self, title: str) -> str:
+        """Popisek grafu i s tím, co se měří – vzorek patří k datům."""
+        sample = self.panel.sampleLabel()
+        return f"{title} · {sample}" if sample else title
+
     def refresh(self) -> None:
         series = self.panel.series
         key, title = PLOTTABLE[max(0, self.cmb_metric.currentIndex())]
-        self.chart.setLines(self._chartLines(series, key), title)
+        self.chart.setLines(self._chartLines(series, key), self._chartTitle(title))
         self.table.setRowCount(len(series.samples))
         for r, sample in enumerate(series.samples):
             self._fillRow(r, sample)
@@ -218,7 +229,7 @@ class DarkFieldWindow(QDialog):
             self.refresh()
             return
         key, title = PLOTTABLE[max(0, self.cmb_metric.currentIndex())]
-        self.chart.setLines(self._chartLines(series, key), title)
+        self.chart.setLines(self._chartLines(series, key), self._chartTitle(title))
         row_index = self.table.rowCount()
         if row_index != len(series.samples) - 1:
             self.refresh()                 # tabulka se rozešla s daty
@@ -241,6 +252,8 @@ class DarkFieldPanel(QWidget):
     reanalyzeRequested = pyqtSignal()
     #: uživatel změnil strop fronty v paměti (v MB)
     queueLimitChanged = pyqtSignal(int)
+    #: změnil se popis vzorku (materiál nebo teplota)
+    sampleChanged = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -256,6 +269,34 @@ class DarkFieldPanel(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, theme.SPACE_1, 0, theme.SPACE_1)
         lay.setSpacing(theme.SPACE_3)
+
+        # --- zkoumaný vzorek
+        card = Card("Vzorek")
+        self.cmb_material = QComboBox()
+        for key, title in df.MATERIALS:
+            self.cmb_material.addItem(title, key)
+        self.cmb_material.setToolTip(
+            "Co se měří. Zapíše se do názvu složky se snímky, do názvu CSV,\n"
+            "do hlavičky tabulky i do popisku grafu.")
+        self.cmb_material.currentIndexChanged.connect(self._onSampleChanged)
+        card.add(row(label("Materiál", "meta"), None, (self.cmb_material, 3)))
+
+        self.spin_temp = QDoubleSpinBox()
+        self.spin_temp.setRange(-50.0, 500.0)
+        self.spin_temp.setDecimals(1)
+        self.spin_temp.setSingleStep(5.0)
+        self.spin_temp.setValue(0.0)
+        self.spin_temp.setSuffix(" °C")
+        self.spin_temp.setKeyboardTracking(False)
+        self.spin_temp.setFixedWidth(96)
+        self.spin_temp.setToolTip(
+            "Na kolik stupňů je vzorek zahříván. Nula = neuvedeno.")
+        self.spin_temp.valueChanged.connect(self._onSampleChanged)
+        card.add(row(label("Teplota", "meta"), None, self.spin_temp))
+        self.lbl_sample = label("", "meta")
+        self.lbl_sample.setWordWrap(True)
+        card.add(self.lbl_sample)
+        lay.addWidget(card)
 
         # --- reference
         card = Card("Referenční snímek")
@@ -467,6 +508,7 @@ class DarkFieldPanel(QWidget):
         lay.addStretch(1)
         self._onModeChanged(0)
         self._updateStackInfo()
+        self._onSampleChanged()
 
     # -------------------------------------------------------------- stav ---
     def _onModeChanged(self, index: int) -> None:
@@ -519,12 +561,38 @@ class DarkFieldPanel(QWidget):
             um_per_px=getattr(self, "_um_per_px", 0.0),
             store_frames=self.chk_store.isChecked(),
             stack_frames=self.spin_stack.value(),
+            material=self.material(),
+            temperature_c=self.temperature(),
             queue_mb=self.spin_queue.value(),
             multichannel=self.chk_multi.isChecked(),
             settle_ms=int(self.spin_settle.value() * 1000),
             exposure_scale={k: w[0].value() for k, w in self.channel_rows.items()},
             focus_offset={k: w[1].value() for k, w in self.channel_rows.items()},
             roi=roi if self.chk_roi.isChecked() else None)
+
+    # ------------------------------------------------------------- vzorek ---
+    def _onSampleChanged(self, *_) -> None:
+        tag = self.sampleTag()
+        self.lbl_sample.setText(
+            "Do názvů souborů: …_{}".format(tag) if tag
+            else "Bez označení – doplňte materiál a teplotu.")
+        self.sampleChanged.emit()
+        if self.window_ is not None:
+            self.window_.refresh()
+
+    def material(self) -> str:
+        return self.cmb_material.currentData() or ""
+
+    def temperature(self) -> float:
+        return float(self.spin_temp.value())
+
+    def sampleTag(self) -> str:
+        """Značka do názvů složek a souborů (bez diakritiky)."""
+        return df.sample_tag(self.material(), self.temperature())
+
+    def sampleLabel(self) -> str:
+        """Popisek do grafu a hlaviček."""
+        return df.sample_label(self.material(), self.temperature())
 
     def isMultichannel(self) -> bool:
         return self.chk_multi.isChecked()
@@ -600,6 +668,14 @@ class DarkFieldPanel(QWidget):
             # Starší soubor průměrování neznal – měřilo se z jednoho snímku
             # a interval znamenal totéž co dnes. Ať se chová jako tehdy.
             self.spin_stack.setValue(1)
+        if "material" in data:
+            index = self.cmb_material.findData(str(data["material"]))
+            self.cmb_material.setCurrentIndex(max(0, index))
+        if "temperature_c" in data:
+            try:
+                self.spin_temp.setValue(float(data["temperature_c"]))
+            except (TypeError, ValueError):
+                pass
         mode = data.get("threshold_mode")
         if mode in (df.THRESHOLD_SIGMA, df.THRESHOLD_ABSOLUTE):
             self.seg_mode.setCurrentIndex(0 if mode == df.THRESHOLD_SIGMA else 1)
@@ -707,7 +783,8 @@ class DarkFieldPanel(QWidget):
                                     "Zatím není co uložit – nic se nezměřilo.")
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Uložit tabulku", df.default_csv_name(self._save_dir),
+            self, "Uložit tabulku",
+            df.default_csv_name(self._save_dir, self.sampleTag()),
             "CSV (*.csv)")
         if not path:
             return
@@ -730,7 +807,7 @@ class DarkFieldPanel(QWidget):
         if not len(self.series):
             return ""
         os.makedirs(folder, exist_ok=True)
-        path = df.default_csv_name(folder)
+        path = df.default_csv_name(folder, self.sampleTag())
         self.series.to_csv(path, self.settings(), self.bias)
         return path
 
@@ -755,6 +832,10 @@ class DarkFieldPanel(QWidget):
                  f"pokrytí {last.coverage_pct:.4f} %"]
         if last.particles >= 0:
             parts.append(f"{int(last.particles)} částic")
+        if getattr(last, "haze_pct", 0):
+            parts.append(f"opar {last.haze_pct:.2f} %")
+        if getattr(last, "cleanliness", 0):
+            parts.append(f"čistota {last.cleanliness:.0f} %")
         if last.area_um2:
             parts.append(f"{last.area_um2:.0f} µm²")
         parts.append(f"trend {rate:+.4f} %/min")
