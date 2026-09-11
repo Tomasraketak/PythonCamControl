@@ -102,27 +102,51 @@ COLUMNS: Sequence[Tuple[str, str, str]] = (
     ("rate_signal",    "Rychlost signálu",   "ADU/s"),
     ("rate_particles", "Rychlost částic",    "1/s"),
     ("phase",          "Fáze děje",          ""),
+    ("align_dx",       "Drift X",            "px"),
+    ("align_dy",       "Drift Y",            "px"),
+    ("align_stars",    "Spárovaných částic", ""),
 )
 
 #: metody rozboru
 METHOD_DFA = "dfa"          # port z projektu DarkFieldAnalyzer (potřebuje OpenCV)
 METHOD_SIMPLE = "simple"    # původní jednoduchý práh nad rozdílem
 
+#: klíč volby „Vlastní…“ – materiál si uživatel vypíše sám
+CUSTOM_MATERIAL = "custom"
+
+
+def slug(text: str, limit: int = 24) -> str:
+    """Z textu udělá kousek názvu souboru: bez diakritiky, mezer a zvláštních znaků."""
+    import unicodedata
+    plain = unicodedata.normalize("NFKD", str(text))
+    plain = "".join(ch for ch in plain if not unicodedata.combining(ch))
+    out = []
+    for ch in plain:
+        if ch.isalnum() and ch.isascii():          # jen a–z a číslice
+            out.append(ch.lower())
+        elif ch in " _-/\\.":
+            out.append("-")
+    text = "-".join(part for part in "".join(out).split("-") if part)
+    return text[:limit]
+
+
 #: Zkoumané materiály. Klíč je i součástí názvů souborů, proto bez diakritiky.
 MATERIALS: Sequence[Tuple[str, str]] = (
     ("", "Neuvedeno"),
+    ("blank", "Blank (bez vzorku)"),
     ("epoxid-vytvrzeny", "Epoxid vytvrzený"),
     ("epoxid-nevytvrzeny", "Epoxid nevytvrzený"),
     ("pla", "PLA"),
     ("petg", "PETG"),
     ("kapton", "Kaptonová páska"),
+    (CUSTOM_MATERIAL, "Vlastní…"),
 )
 
 
 def material_title(key: str) -> str:
-    """Popisek materiálu podle klíče."""
+    """Popisek materiálu podle klíče; neznámý klíč je vlastní text."""
     for item, title in MATERIALS:
-        if item == key:
+        if item == key and item != CUSTOM_MATERIAL:
             return title
     return str(key)
 
@@ -134,7 +158,7 @@ def sample_tag(material: str = "", temperature_c: float = 0.0) -> str:
     kódování potrpí."""
     parts = []
     if material:
-        parts.append(str(material))
+        parts.append(slug(material) or "vzorek")
     if temperature_c:
         value = float(temperature_c)
         text = ("{:.0f}".format(value) if abs(value - round(value)) < 0.05
@@ -176,6 +200,9 @@ class Settings:
         self.fiber_aspect_ratio: float = 2.8  # protáhlost, od které jde o vlákno
         self.fiber_min_length_px: int = 12    # minimální délka vlákna
         self.saturation_adu: float = 250.0    # hranice přesyceného pixelu
+        # srovnání driftu sklíčka podle „souhvězdí“ statických částic
+        self.align_frames: bool = True
+        self.align_crop_fraction: float = 0.95   # kolik plochy zůstane po ořezu
         self.binning: int = 0                 # 0 = zvolit podle rozlišení
         # zkoumaný vzorek – jde do názvů souborů, grafů i hlaviček CSV
         self.material: str = ""
@@ -203,6 +230,8 @@ class Bias:
         self.frames = int(frames)
         self.created = created or datetime.now()
         self.note = note
+        #: Model zarovnání postavený z téhle reference (jen za běhu, neukládá se).
+        self.anchor = None
 
     @property
     def shape(self) -> Tuple[int, int]:
@@ -437,7 +466,8 @@ class Sample:
                 out.append(str(value) if value else "–")
             elif key in ("index", "particle_area_px", "points", "clusters",
                          "fibers", "max_area_px", "saturated_px", "area_px",
-                         "point_area_px", "cluster_area_px", "fiber_area_px"):
+                         "point_area_px", "cluster_area_px", "fiber_area_px",
+                         "align_stars"):
                 out.append(f"{int(value)}")
             elif key == "clock":
                 out.append(str(value))
@@ -541,7 +571,8 @@ def analyze(gray: np.ndarray, bias: Optional[Bias],
                 "({}×{}). Pořiďte referenci znovu."
                 .format(reference.shape[1], reference.shape[0],
                         np.asarray(gray).shape[1], np.asarray(gray).shape[0]))
-        metrics = dfa.analyze_frame(gray, reference, settings)
+        metrics = dfa.analyze_frame(gray, reference, settings,
+                                    anchor=getattr(bias, "anchor", None))
         metrics["method"] = METHOD_DFA
         return metrics
     metrics = analyze_simple(gray, bias, settings)

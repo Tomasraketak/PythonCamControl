@@ -1534,6 +1534,11 @@ def test_measurement_autosaves_and_starts_a_fresh_series():
     win = MainWindow(prefer_demo=True)
     try:
         win.save_dir = folder
+        # čerstvá reference, ať se měření nezastaví kvůli automatickému snímání
+        import numpy as np
+
+        from bmscam import darkfield as df
+        win.df_panel.setBias(df.Bias(np.zeros((16, 16), np.float32), 16))
         win.df_panel.addSample({"coverage_pct": 1.0, "particles": 2,
                                 "area_px": 10, "threshold": 5.0})
         assert len(win.df_panel.series) == 1
@@ -1776,7 +1781,15 @@ def test_camera_switches_between_color_and_mono():
         app.processEvents()
         assert win.isMonochrome()
         assert win.camera.get("chrome") == 1
-        pixels = frame_gray()
+        # kamera může mít rozpracovaný ještě barevný snímek – počkáme na další
+        import time as _time
+        deadline = _time.time() + 5.0
+        while _time.time() < deadline:
+            pixels = frame_gray()
+            if np.array_equal(pixels[:, :, 0], pixels[:, :, 2]):
+                break
+            app.processEvents()
+            _time.sleep(0.05)
         assert np.array_equal(pixels[:, :, 0], pixels[:, :, 2]), "obraz není šedý"
         # dark field pozná černobílý obraz a nemusí složky průměrovat
         assert df.to_gray_u8(win.camera.pull()).ndim == 2
@@ -2461,6 +2474,116 @@ def test_live_table_matches_the_batch_analysis_row_by_row():
                         (ours, mine, theirs_value)
     finally:
         shutil.rmtree(folder, ignore_errors=True)
+
+
+def test_stale_reference_is_retaken_before_measuring():
+    """Starší reference než dvě minuty se před měřením pořídí znovu."""
+    import shutil
+    import tempfile
+    import time as _time
+    from datetime import datetime, timedelta
+
+    import numpy as np
+
+    from bmscam import darkfield as df
+    from bmscam.ui.main_window import MainWindow
+
+    app = _app()
+    folder = tempfile.mkdtemp()
+    win = MainWindow(prefer_demo=True)
+    win.connectCamera()
+    try:
+        win.save_dir = folder
+        deadline = _time.time() + 5.0
+        while _time.time() < deadline and not win.view.hasImage():
+            app.processEvents()
+            _time.sleep(0.02)
+
+        # reference stará pět minut
+        old = df.Bias(np.zeros((16, 16), np.float32), 16,
+                      created=datetime.now() - timedelta(minutes=5))
+        win.df_panel.setBias(old)
+        assert win._biasIsStale()
+
+        win.df_panel.chk_store.setChecked(False)
+        win.df_panel.spin_stack.setValue(1)
+        win.df_panel.setMeasuring(True)           # jako kliknutí na Spustit měření
+        app.processEvents()
+        # měření zatím neběží – nejdřív se snímá reference
+        assert win.df_runner.collecting_bias or win._start_after_bias
+
+        deadline = _time.time() + 20.0
+        while _time.time() < deadline and win._start_after_bias:
+            app.processEvents()
+            _time.sleep(0.02)
+        assert win._start_after_bias is None, "reference se nedokončila"
+        assert not win._biasIsStale(), "nová reference není čerstvá"
+        assert win.df_panel.isMeasuring(), "měření se po referenci nespustilo"
+        assert win.df_timer.isActive()
+
+        win.df_panel.setMeasuring(False)
+        app.processEvents()
+
+        # čerstvá reference se znovu nesnímá
+        win.df_panel.setMeasuring(True)
+        app.processEvents()
+        assert win._start_after_bias is None
+        assert not win.df_runner.collecting_bias
+        win.df_panel.setMeasuring(False)
+        app.processEvents()
+    finally:
+        win.close()
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def test_live_alignment_cancels_a_shifted_slide():
+    """Živé zarovnání podle prachu smaže falešnou kontaminaci z driftu."""
+    import cv2
+    import numpy as np
+
+    from bmscam import darkfield as df, dfa
+
+    rng = np.random.default_rng(4)
+    size = (400, 560)
+    stars = [(int(rng.integers(25, size[0] - 25)), int(rng.integers(25, size[1] - 25)))
+             for _ in range(80)]
+
+    def render(dy, dx, extra=0, seed=0):
+        local = np.random.default_rng(seed)
+        canvas = np.zeros(size, np.float32)
+        for y, x in stars:
+            yy, xx = y + dy, x + dx
+            if 5 < yy < size[0] - 6 and 5 < xx < size[1] - 6:
+                canvas[yy, xx] += 900.0
+        for _ in range(extra):
+            canvas[int(local.integers(20, size[0] - 20)),
+                   int(local.integers(20, size[1] - 20))] += 700.0
+        # částice rozostřená optikou – ostrý bod jádro bere jako vadný pixel
+        canvas = cv2.GaussianBlur(canvas, (0, 0), 1.6)
+        return np.clip(16.0 + canvas + local.normal(0, 1.0, size), 0, 255).astype("uint8")
+
+    settings = df.Settings(binning=1)
+    reference = render(0, 0, seed=1)
+    bias = df.Bias(reference.astype(np.float32), 16)
+    bias.anchor = dfa.build_anchor(bias.mean, settings)
+    assert bias.anchor is not None and bias.anchor.usable
+    assert bias.anchor.anchor.count > 40
+    assert bias.anchor.crop is not None            # ořez je pevný, ne podle driftu
+
+    shifted = render(7, -5, seed=2)
+    aligned = df.analyze(shifted, bias, settings)
+    plain = df.analyze(shifted, df.Bias(reference.astype(np.float32), 16),
+                       df.Settings(binning=1, align_frames=False))
+    assert aligned["align_stars"] > 40
+    assert abs(aligned["align_dx"] + 5.0) < 1.0
+    assert abs(aligned["align_dy"] - 7.0) < 1.0
+    assert aligned["particles"] == 0, aligned["particles"]
+    assert plain["particles"] > 40, "bez zarovnání musí drift udělat falešné částice"
+
+    # skutečné nové částice zarovnání nesmaže
+    dirty = render(7, -5, extra=6, seed=3)
+    found = df.analyze(dirty, bias, settings)
+    assert found["particles"] == 6, found["particles"]
 
 
 if __name__ == "__main__":

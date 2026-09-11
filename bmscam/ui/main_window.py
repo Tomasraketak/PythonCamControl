@@ -66,6 +66,7 @@ class MainWindow(QMainWindow):
         self._timelapse_dir: Optional[str] = None
         self._df_pending = False          # čeká se na snímek k rozboru
         self._df_store = None             # složka se snímky pro zpětný rozbor
+        self._start_after_bias = None     # (běží, interval) – měření čeká na referenci
         self._df_stack_left = 0           # kolik dílčích snímků do průměru zbývá
         self._df_stack_last = 0.0         # čas posledního dílčího snímku
         self._df_last_bias_frame = 0.0    # kdy naposled šel snímek do reference
@@ -825,6 +826,7 @@ class MainWindow(QMainWindow):
         if self.camera is None or not self.camera.is_running():
             QMessageBox.information(self, APP_NAME,
                                     "Nejdřív připojte kameru a spusťte obraz.")
+            self._start_after_bias = None
             return
         self._df_last_bias_frame = 0.0
         self._bias_frames = frames
@@ -843,6 +845,18 @@ class MainWindow(QMainWindow):
             return
         self.statusMessage("Reference pořízena", 4000)
         self._autoSaveBias()
+        self._startAfterBias()
+
+    def _startAfterBias(self) -> None:
+        """Rozjede měření, které čekalo na čerstvou referenci."""
+        pending = getattr(self, "_start_after_bias", None)
+        if not pending:
+            return
+        self._start_after_bias = None
+        _flag, interval = pending
+        # Tlačítko zůstalo po celou dobu snímání reference zapnuté (měření je
+        # „natažené“), takže se nespouští znovu kliknutím, ale přímo.
+        self._onDarkFieldToggled(True, interval)
 
     def _onDarkFieldSample(self, metrics, when) -> None:
         self.df_panel.addSample(metrics, when)
@@ -955,6 +969,7 @@ class MainWindow(QMainWindow):
         if mode == "bias":
             self.statusMessage("Reference pořízena pro všechny tři kanály", 5000)
             self._autoSaveBias()
+            self._startAfterBias()
 
     def _onQueueLimitChanged(self, megabytes: int) -> None:
         """Strop fronty rozboru v paměti; drží se i po zavření aplikace."""
@@ -965,9 +980,21 @@ class MainWindow(QMainWindow):
             .format(int(megabytes), max(1, int(megabytes) // 8)), 5000)
 
     def _onDarkFieldFailed(self, message: str) -> None:
+        self._start_after_bias = None      # měření po referenci už nečeká
         self._df_pending = False
         self.df_panel.stopMeasuring()
         QMessageBox.warning(self, APP_NAME, f"Rozbor obrazu selhal:\n{message}")
+
+    #: Po téhle době je reference na měření moc stará – expozice, teplota
+    #: senzoru i osvětlení se mezitím stihnou posunout.
+    BIAS_MAX_AGE_S = 120.0
+
+    def _biasIsStale(self) -> bool:
+        """True, když reference chybí nebo je starší než dvě minuty."""
+        bias = self.df_panel.bias.get(self._mc_channel)
+        if bias is None:
+            return True
+        return (datetime.now() - bias.created).total_seconds() > self.BIAS_MAX_AGE_S
 
     def _onDarkFieldToggled(self, on: bool, interval: float) -> None:
         if on:
@@ -975,6 +1002,15 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, APP_NAME,
                                         "Nejdřív připojte kameru a spusťte obraz.")
                 self.df_panel.stopMeasuring()
+                return
+            if self._biasIsStale() and not self._mc_mode:
+                # Stará reference měří proti pozadí, které už neplatí. Pořídí
+                # se nová a měření se rozjede samo hned po ní.
+                self._start_after_bias = (True, interval)
+                self.statusMessage(
+                    "Reference chybí nebo je starší než dvě minuty – snímám "
+                    "novou, měření se spustí hned po ní.", 8000)
+                self.startBiasCapture(16)
                 return
             self._df_store = None
             if self.df_panel.wantsStoredFrames():
@@ -1004,6 +1040,11 @@ class MainWindow(QMainWindow):
             self._df_pending = False
             self._df_stack_left = 0
             self.df_runner.cancelStack()
+            if self._start_after_bias:
+                # Zastaveno ještě během automatického snímání reference.
+                self._start_after_bias = None
+                self.df_runner.cancelBias()
+                self.statusMessage("Snímání reference zrušeno", 4000)
             if self._mc_mode:
                 self._mc_queue = []
                 self._finishChannelCycle()

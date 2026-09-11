@@ -25,6 +25,15 @@ from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 from .. import darkfield as df
 
 
+def _build_anchor(reference, settings):
+    """Kotva zarovnání; chyba nesmí shodit pořízení reference."""
+    try:
+        from .. import dfa
+        return dfa.build_anchor(reference, settings)
+    except Exception:                                  # noqa: BLE001
+        return None
+
+
 class _Worker(QObject):
     """Vlastní výpočet – žije ve vlákně, nesahá na žádný widget."""
 
@@ -61,7 +70,13 @@ class _Worker(QObject):
                 if collector.add(df.crop(gray, settings.roi)):
                     self._collector = None
                     self.biasProgress.emit(collector.taken, collector.count)
-                    self.biasReady.emit(collector.result())
+                    bias = collector.result()
+                    # Kotva zarovnání se staví z hotové reference – je to
+                    # průměr snímků čistého sklíčka, tedy to nejklidnější,
+                    # co k dispozici je. Stojí to desetiny sekundy, proto
+                    # to patří sem do vlákna, ne do obsluhy okna.
+                    bias.anchor = _build_anchor(bias.mean, settings)
+                    self.biasReady.emit(bias)
                 else:
                     self.biasProgress.emit(collector.taken, collector.count)
                 return

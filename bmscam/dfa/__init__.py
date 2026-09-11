@@ -11,10 +11,12 @@ Modul :mod:`live` navíc počítá jeden snímek za běhu měření, aby se stej
 metoda dala použít i živě u kamery.
 """
 
-from .live import (available, analyze_frame, resolve_binning, apply_binning,
-                   estimate_noise, separate_haze, cleanliness_score,
-                   params_from_settings, AUTO_BINNING_TARGET_HEIGHT)
+from .live import (available, analyze_frame, build_anchor, resolve_binning,
+                   apply_binning, estimate_noise, separate_haze,
+                   cleanliness_score, params_from_settings,
+                   AUTO_BINNING_TARGET_HEIGHT)
 
-__all__ = ["available", "analyze_frame", "resolve_binning", "apply_binning",
-           "estimate_noise", "separate_haze", "cleanliness_score",
-           "params_from_settings", "AUTO_BINNING_TARGET_HEIGHT"]
+__all__ = ["available", "analyze_frame", "build_anchor", "resolve_binning",
+           "apply_binning", "estimate_noise", "separate_haze",
+           "cleanliness_score", "params_from_settings",
+           "AUTO_BINNING_TARGET_HEIGHT"]

@@ -8,6 +8,7 @@ snímek se převede do geometrie rozboru (binning) a zavolá se přímo
 Výsledné :class:`FrameMetrics` se jen přeloží na klíče sloupců tabulky.
 """
 
+from dataclasses import replace as _replace
 from datetime import datetime
 from typing import Dict, Optional
 
@@ -141,8 +142,65 @@ def metrics_to_dict(metrics) -> Dict[str, float]:
     return out
 
 
+def build_anchor(reference: np.ndarray, settings):
+    """Sestaví kotvu zarovnání z referenčního snímku.
+
+    U dávkové analýzy je kotvou první snímek série; živě je jí **reference
+    čistého sklíčka**, protože právě proti ní se všechno odečítá. Na ní se
+    najdou horké pixely a „souhvězdí“ statických částic, podle kterého se
+    pak každé měření srovná zpátky.
+
+    Ořez se spočítá **jednou a napevno** (podíl plochy z nastavení), ne
+    podle naměřeného driftu jako v dávce: živě drift dopředu neznáme a
+    měnit vyhodnocovanou plochu během běhu by rozhýbalo procenta pokrytí,
+    která se mají porovnávat mezi sebou.
+
+    Vrací model, nebo ``None``, když zarovnání není zapnuté nebo se na
+    referenci nenašlo dost zřetelných částic."""
+    if not getattr(settings, "align_frames", True):
+        return None
+    analyzer = _analyzer()
+    from .alignment import (AlignmentModel, detect_stars, find_hot_pixels,
+                            repair_hot_pixels, safe_crop_rect)
+
+    params = params_from_settings(settings)
+    anchor = np.ascontiguousarray(reference, dtype=np.float32)
+    binning = params.resolve_binning(anchor.shape[0])
+    anchor = analyzer.apply_binning(anchor, binning)
+
+    hot_mask = find_hot_pixels(anchor)
+    anchor = repair_hot_pixels(anchor, hot_mask)
+    stars = detect_stars(anchor, hot_mask=hot_mask,
+                         star_count=params.align_star_count,
+                         sigma=params.align_star_sigma)
+
+    model = AlignmentModel(
+        anchor=stars, anchor_path="reference", binning=binning,
+        max_shift_px=int(params.align_max_shift_px),
+        min_matches=int(params.align_min_matches),
+        star_count=int(params.align_star_count),
+        star_sigma=float(params.align_star_sigma),
+        hot_mask=hot_mask,
+        hot_pixel_count=int(hot_mask.sum()) if hot_mask is not None else 0,
+        estimate_rotation=bool(params.align_rotation))
+
+    if stars.count < params.align_min_matches:
+        model.usable = False
+        model.notes.append(
+            "Na referenci se našlo jen {} zřetelných částic (potřeba {}) – "
+            "zarovnání se nepoužije.".format(stars.count, params.align_min_matches))
+        return model
+
+    fraction = float(getattr(settings, "align_crop_fraction", 0.95))
+    full_shape = (anchor.shape[0] * binning, anchor.shape[1] * binning)
+    model.crop, model.crop_fraction = safe_crop_rect(
+        full_shape, drift_px=0.0, mode="fixed", fraction=fraction)
+    return model
+
+
 def analyze_frame(gray: np.ndarray, reference: Optional[np.ndarray],
-                  settings, when: Optional[datetime] = None) -> Dict[str, float]:
+                  settings, when: Optional[datetime] = None,
+                  anchor=None) -> Dict[str, float]:
     """Spočítá metriky jednoho snímku převzatým jádrem rozboru.
 
     Snímek i reference se nejdřív převedou do geometrie rozboru (binning),
@@ -164,10 +222,34 @@ def analyze_frame(gray: np.ndarray, reference: Optional[np.ndarray],
     image = analyzer.apply_binning(image, binning)
     bias = analyzer.apply_binning(bias, binning)
 
+    # --- srovnání driftu podle souhvězdí částic ---------------------------
+    shift = None
+    if anchor is not None and getattr(anchor, "usable", False):
+        from .alignment import repair_hot_pixels, warp_to_anchor
+        image = repair_hot_pixels(image, anchor.hot_mask)
+        shift = anchor.measure(image)
+        if shift.ok and not shift.is_identity:
+            image = warp_to_anchor(image, shift)
+        from .alignment import intersect_roi
+        roi = intersect_roi(params.roi, anchor.crop)
+        params = _replace(params, roi=roi)
+
+    # Výřez se uplatní na snímek i na referenci stejně – po srovnání chybí
+    # u okraje pruh, který do měření nepatří.
+    image = analyzer.crop_to_roi(image, params.roi, binning)
+    bias = analyzer.crop_to_roi(bias, params.roi, binning)
+
     stamp = when or datetime.now()
     metrics, _ = analyzer.analyze_prepared_frame(
         image, bias, params, index=0, filename="", filepath="",
         timestamp=stamp, t0=stamp, binning=binning)
     out = metrics_to_dict(metrics)
     out["binning"] = binning
+    # Posun se do metrik zapisuje jen tehdy, když se opravdu použil –
+    # odhad z jednoho páru částic je nesmysl a v tabulce by mátl.
+    applied = shift is not None and shift.ok
+    out["align_dx"] = float(shift.dx * binning) if applied else 0.0
+    out["align_dy"] = float(shift.dy * binning) if applied else 0.0
+    out["align_stars"] = int(shift.matched) if shift is not None else 0
+    out["align_ok"] = 1 if applied else 0
     return out

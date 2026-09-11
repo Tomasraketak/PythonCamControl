@@ -11,7 +11,8 @@ from typing import Dict, List, Optional
 from PyQt5.QtCore import QPointF, Qt, pyqtSignal
 from PyQt5.QtGui import QColor, QPainter, QPen, QPolygonF
 from PyQt5.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox,
-                             QFileDialog, QHBoxLayout, QHeaderView, QMessageBox,
+                             QFileDialog, QHBoxLayout, QHeaderView, QLineEdit,
+                             QMessageBox,
                              QSizePolicy, QSpinBox, QSplitter, QTableWidget,
                              QTableWidgetItem, QVBoxLayout, QWidget)
 
@@ -22,7 +23,7 @@ from .widgets import Card, SegmentedControl, button, hline, label, row
 #: metriky nabízené v grafu (klíč -> popis)
 #: veličiny nabízené v grafu – stejné, jaké kreslí dávková analýza
 PLOTTABLE = (
-    ("coverage_pct", "Pokrytí plochy [%]"),
+    ("coverage_pct", "Kontaminace – pokrytí plochy [%]"),
     ("haze_pct", "Zamlžení [%]"),
     ("haze_only_pct", "Opar bez částic [%]"),
     ("particles", "Počet částic"),
@@ -293,8 +294,17 @@ class DarkFieldPanel(QWidget):
         self.cmb_material.setToolTip(
             "Co se měří. Zapíše se do názvu složky se snímky, do názvu CSV,\n"
             "do hlavičky tabulky i do popisku grafu.")
-        self.cmb_material.currentIndexChanged.connect(self._onSampleChanged)
+        self.cmb_material.currentIndexChanged.connect(self._onMaterialChosen)
         card.add(row(label("Materiál", "meta"), None, (self.cmb_material, 3)))
+
+        self.edit_material = QLineEdit()
+        self.edit_material.setPlaceholderText("název vlastního vzorku")
+        self.edit_material.setToolTip(
+            "Vlastní označení vzorku. Do názvů souborů se z něj udělá "
+            "bezpečná zkratka (bez diakritiky a mezer).")
+        self.edit_material.setVisible(False)
+        self.edit_material.editingFinished.connect(self._onSampleChanged)
+        card.add(self.edit_material)
 
         self.spin_temp = QDoubleSpinBox()
         self.spin_temp.setRange(-50.0, 500.0)
@@ -456,6 +466,16 @@ class DarkFieldPanel(QWidget):
         self.spin_fiber_len.setFixedWidth(84)
         card.add(row(label("Min. délka vlákna [px]", "meta"), None, self.spin_fiber_len))
 
+        self.chk_align = QCheckBox("Srovnat drift podle prachu")
+        self.chk_align.setChecked(True)
+        self.chk_align.setToolTip(
+            "Před vyhodnocením se snímek srovná na referenci podle "
+            "„souhvězdí“ statických částic – stejně jako v dávkové analýze.\n"
+            "Bez toho se posunuté staré částice počítají jako nová "
+            "kontaminace. Kotva se staví z reference, takže po jejím "
+            "pořízení se drift měří proti ní.")
+        card.add(self.chk_align)
+
         self.cmb_binning = QComboBox()
         for value, title in ((0, "Automaticky"), (1, "Plné"),
                              (2, "1/2 (2×2)"), (4, "1/4 (4×4)")):
@@ -576,18 +596,15 @@ class DarkFieldPanel(QWidget):
         self.spin_abs.setEnabled(index == 1)
 
     def _onMeasureToggled(self, on: bool) -> None:
-        if on and not self.bias:
-            answer = QMessageBox.question(
-                self, "Dark Field",
-                "Není pořízený referenční snímek čistého sklíčka.\n\n"
-                "Bez něj se za pozadí bere medián obrazu – měření pak "
-                "ukáže jen výrazné částice a ne tenký film. Pokračovat?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if answer != QMessageBox.Yes:
-                self.btn_measure.setChecked(False)
-                return
+        # Na chybějící referenci se tu už neptáme: hlavní okno ji pořídí samo
+        # (a stejně tak, když je starší než dvě minuty) a měření pak rozjede.
         self.btn_measure.setText("Zastavit měření" if on else "Spustit měření")
         self.measureToggled.emit(on, self.spin_interval.value())
+
+    def setMeasuring(self, on: bool) -> None:
+        """Zapne nebo vypne měření zvenčí (stejně jako kliknutí na tlačítko)."""
+        if self.btn_measure.isChecked() != bool(on):
+            self.btn_measure.setChecked(bool(on))
 
     def isMeasuring(self) -> bool:
         return self.btn_measure.isChecked()
@@ -626,6 +643,7 @@ class DarkFieldPanel(QWidget):
             fiber_aspect_ratio=self.spin_aspect.value(),
             fiber_min_length_px=self.spin_fiber_len.value(),
             binning=self.cmb_binning.currentData(),
+            align_frames=self.chk_align.isChecked(),
             material=self.material(),
             temperature_c=self.temperature(),
             queue_mb=self.spin_queue.value(),
@@ -645,8 +663,18 @@ class DarkFieldPanel(QWidget):
         if self.window_ is not None:
             self.window_.refresh()
 
+    def _onMaterialChosen(self, *_) -> None:
+        custom = self.cmb_material.currentData() == df.CUSTOM_MATERIAL
+        self.edit_material.setVisible(custom)
+        if custom:
+            self.edit_material.setFocus()
+        self._onSampleChanged()
+
     def material(self) -> str:
-        return self.cmb_material.currentData() or ""
+        key = self.cmb_material.currentData() or ""
+        if key == df.CUSTOM_MATERIAL:
+            return self.edit_material.text().strip()
+        return key
 
     def temperature(self) -> float:
         return float(self.spin_temp.value())
@@ -737,12 +765,23 @@ class DarkFieldPanel(QWidget):
             # Starší soubor průměrování neznal – měřilo se z jednoho snímku
             # a interval znamenal totéž co dnes. Ať se chová jako tehdy.
             self.spin_stack.setValue(1)
+        if "align_frames" in data:
+            self.chk_align.setChecked(bool(data["align_frames"]))
         if "binning" in data:
             index = self.cmb_binning.findData(int(data["binning"] or 0))
             self.cmb_binning.setCurrentIndex(max(0, index))
         if "material" in data:
-            index = self.cmb_material.findData(str(data["material"]))
-            self.cmb_material.setCurrentIndex(max(0, index))
+            value = str(data["material"])
+            index = self.cmb_material.findData(value)
+            if index >= 0:
+                self.cmb_material.setCurrentIndex(index)
+            elif value:                              # vlastní název vzorku
+                self.cmb_material.setCurrentIndex(
+                    self.cmb_material.findData(df.CUSTOM_MATERIAL))
+                self.edit_material.setText(value)
+            else:
+                self.cmb_material.setCurrentIndex(0)
+            self._onMaterialChosen()
         if "temperature_c" in data:
             try:
                 self.spin_temp.setValue(float(data["temperature_c"]))
@@ -919,6 +958,10 @@ class DarkFieldPanel(QWidget):
         missing = self.missingBias()
         if self.bias and missing and missing != [""]:
             text += " · chybí: " + ", ".join(df.CHANNEL_TITLES[c] for c in missing)
+        anchor = getattr(self.bias.get(""), "anchor", None)
+        if anchor is not None:
+            text += (" · zarovnání: {} částic".format(anchor.anchor.count)
+                     if anchor.usable else " · zarovnání nelze (málo částic)")
         self.lbl_bias.setText(text)
         self.btn_bias_save.setEnabled(bool(self.bias))
         self.lbl_values.setText(self.summaryText())
