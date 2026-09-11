@@ -112,7 +112,8 @@ levého panelu. Do jednoho souboru JSON jde všechno najednou:
 * kamera – expozice, barvy, obraz, ostření, rozlišení i kodek (ten se
   v panelu nezobrazuje, ale ukládá a načítá se dál),
 * osvětlení – jas a barva každé strany, hlavní jas, natočení modulů,
-* Dark Field – interval, práh, minimální částice, ukládání snímků,
+* Dark Field – vzorek (materiál včetně *Blank* a vlastního názvu, teplota),
+  interval, prahy, zarovnání driftu, ukládání snímků,
 * snímání – pracovní složka, interval časosběru, kalibrace měřítka.
 
 Karta *Snímání* v levém panelu je záměrně malá: tlačítka **Snímek**,
@@ -208,7 +209,12 @@ je jen shrnutí kroků:
    složce – vedle `.npz` vznikne i JSON s popisem podmínek (expozice, zisk,
    osvětlení, práh), aby bylo za měsíc jasné, k čemu patří.
 3. Vyměňte sklíčko za měřené, nastavte **interval** (výchozí 5 s) a dejte
-   **Spustit měření**.
+   **Spustit měření**. Když je reference starší než **dvě minuty** (nebo
+   žádná není), program ji nejdřív sám pořídí z 16 snímků a hned po ní
+   měření rozjede – stará reference popisuje pozadí, které už neplatí.
+   Každé měření se **srovná podle prachu** na referenci (vypíná se
+   zaškrtávátkem *Srovnat drift podle prachu*), takže posun sklíčka
+   nedělá falešnou kontaminaci.
    Každé měření vzniká z **průměru pěti snímků** – pořídí se jeden za
    sekundu a měří se až z jejich průměru, který se také ukládá jako PNG.
    Šum senzoru tím klesne na 45 %, takže se nad práh dostane i slabý film.
