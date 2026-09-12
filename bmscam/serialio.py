@@ -5,7 +5,6 @@ takže se s Qt prvky pracuje vždy jen v hlavním vlákně.
 """
 
 import threading
-import time
 from typing import List, Optional
 
 from PyQt5.QtCore import QObject, pyqtSignal

@@ -593,7 +593,18 @@ class AnalyzerScreen(QWidget):
                                 "\\n".join(str(w) for w in result.warnings[:8]))
 
     # ------------------------------------------------------------ výstupy ---
+    #: Kolik řádků se do tabulky vypíše. Víc už jen zdržuje – tabulka Qt
+    #: staví každou buňku jako samostatný objekt a u dlouhé série by se okno
+    #: na několik sekund zaseklo. Celá data jsou v exportu CSV.
+    MAX_TABLE_ROWS = 2000
+
     def fillTable(self, metrics) -> None:
+        shown = list(metrics)[: self.MAX_TABLE_ROWS]
+        if len(metrics) > len(shown):
+            self.lbl_status.setText(
+                "V tabulce je prvních {} z {} snímků – celá data uložte do CSV."
+                .format(len(shown), len(metrics)))
+        metrics = shown
         self.tbl_results.setRowCount(len(metrics))
         for r, item in enumerate(metrics):
             for c, (name, attr, spec) in enumerate(exporter.CSV_COLUMNS):

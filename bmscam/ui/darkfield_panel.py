@@ -18,7 +18,8 @@ from PyQt5.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox,
 
 from .. import darkfield as df
 from . import theme
-from .widgets import Card, SegmentedControl, button, hline, label, row
+from .widgets import (Card, Collapsible, SegmentedControl, button, label,
+                      row)
 
 #: metriky nabízené v grafu (klíč -> popis)
 #: veličiny nabízené v grafu – stejné, jaké kreslí dávková analýza
@@ -332,7 +333,7 @@ class DarkFieldPanel(QWidget):
         self.spin_bias_frames.setRange(1, 200)
         self.spin_bias_frames.setValue(16)
         self.spin_bias_frames.setFixedWidth(64)
-        card.add(row(label("Průměrovat", "meta"), self.spin_bias_frames,
+        card.add(row(label("Snímků na referenci", "meta"), self.spin_bias_frames,
                      label("snímků", "meta")))
         self.btn_bias = button("Pořídit", "primary")
         self.btn_bias.clicked.connect(
@@ -385,13 +386,20 @@ class DarkFieldPanel(QWidget):
         self.chk_multi.toggled.connect(self._onMultiToggled)
         card.add(self.chk_multi)
 
+        self.channel_box = QWidget()
+        channel_lay = QVBoxLayout(self.channel_box)
+        channel_lay.setContentsMargins(0, 0, 0, 0)
+        channel_lay.setSpacing(theme.SPACE_1)
+        self.channel_box.setVisible(False)      # ukáže se až se zapnutým režimem
+        card.add(self.channel_box)
+
         head_exp = label("expozice", "meta")
         head_exp.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         head_exp.setFixedWidth(72)
         head_focus = label("ostření", "meta")
         head_focus.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         head_focus.setFixedWidth(64)
-        card.add(row(None, head_exp, head_focus))
+        channel_lay.addLayout(row(None, head_exp, head_focus))
 
         self.channel_rows = {}
         for key in df.CHANNEL_ORDER:
@@ -416,7 +424,7 @@ class DarkFieldPanel(QWidget):
             swatch = label("■", "meta")
             swatch.setStyleSheet("color: rgb({},{},{}); font-size: 15px;"
                                  .format(*df.CHANNEL_COLORS[key]))
-            card.add(row(swatch, label(f"{df.CHANNEL_NM[key]} nm", "meta"),
+            channel_lay.addLayout(row(swatch, label(f"{df.CHANNEL_NM[key]} nm", "meta"),
                          None, scale, focus))
             self.channel_rows[key] = (scale, focus)
 
@@ -431,9 +439,13 @@ class DarkFieldPanel(QWidget):
             "Prodleva po přepnutí barvy a expozice, než se snímek pořídí.\n"
             "Krátká prodleva změří ještě starý obraz – při pochybnostech "
             "prodlužte.")
-        card.add(row(label("Ustálení", "meta"), None, self.spin_settle))
+        channel_lay.addLayout(row(label("Ustálení", "meta"), None, self.spin_settle))
 
-        card.add(label("Rozšířené prahy", "field"))
+        advanced = Collapsible("Rozšířené nastavení")
+        advanced.button.setToolTip(
+            "Prahy a volby, které se nastaví jednou a pak už se s nimi "
+            "nehýbe – stejné jako na obrazovce Analýza.")
+        card.add(advanced)
         self.spin_haze = QDoubleSpinBox()
         self.spin_haze.setRange(0.5, 60.0)
         self.spin_haze.setSingleStep(0.5)
@@ -442,7 +454,7 @@ class DarkFieldPanel(QWidget):
         self.spin_haze.setToolTip(
             "Od jaké úrovně nad referencí se nízkofrekvenční složka počítá "
             "jako zamlžení (kondenzace, film).")
-        card.add(row(label("Práh zamlžení [ADU]", "meta"), None, self.spin_haze))
+        advanced.add(row(label("Práh zamlžení [ADU]", "meta"), None, self.spin_haze))
 
         self.spin_cluster = QSpinBox()
         self.spin_cluster.setRange(20, 20000)
@@ -450,7 +462,7 @@ class DarkFieldPanel(QWidget):
         self.spin_cluster.setValue(100)
         self.spin_cluster.setFixedWidth(84)
         self.spin_cluster.setToolTip("Od téhle plochy je objekt velký shluk.")
-        card.add(row(label("Shluk od [px]", "meta"), None, self.spin_cluster))
+        advanced.add(row(label("Shluk od [px]", "meta"), None, self.spin_cluster))
 
         self.spin_aspect = QDoubleSpinBox()
         self.spin_aspect.setRange(1.5, 20.0)
@@ -458,13 +470,13 @@ class DarkFieldPanel(QWidget):
         self.spin_aspect.setFixedWidth(84)
         self.spin_aspect.setToolTip(
             "Protáhlost ekvivalentní elipsy, od které jde o vlákno nebo škrábanec.")
-        card.add(row(label("Protáhlost vlákna", "meta"), None, self.spin_aspect))
+        advanced.add(row(label("Protáhlost vlákna", "meta"), None, self.spin_aspect))
 
         self.spin_fiber_len = QSpinBox()
         self.spin_fiber_len.setRange(3, 500)
         self.spin_fiber_len.setValue(12)
         self.spin_fiber_len.setFixedWidth(84)
-        card.add(row(label("Min. délka vlákna [px]", "meta"), None, self.spin_fiber_len))
+        advanced.add(row(label("Min. délka vlákna [px]", "meta"), None, self.spin_fiber_len))
 
         self.chk_align = QCheckBox("Srovnat drift podle prachu")
         self.chk_align.setChecked(True)
@@ -474,7 +486,7 @@ class DarkFieldPanel(QWidget):
             "Bez toho se posunuté staré částice počítají jako nová "
             "kontaminace. Kotva se staví z reference, takže po jejím "
             "pořízení se drift měří proti ní.")
-        card.add(self.chk_align)
+        advanced.add(self.chk_align)
 
         self.cmb_binning = QComboBox()
         for value, title in ((0, "Automaticky"), (1, "Plné"),
@@ -483,12 +495,12 @@ class DarkFieldPanel(QWidget):
         self.cmb_binning.setToolTip(
             "Zmenšení před rozborem (průměrování pixelů). Automaticky se 4K "
             "počítá v polovičním rozlišení – stejně jako v dávkové analýze.")
-        card.add(row(label("Rozlišení rozboru", "meta"), None, (self.cmb_binning, 2)))
+        advanced.add(row(label("Rozlišení rozboru", "meta"), None, (self.cmb_binning, 2)))
 
         self.chk_roi = QCheckBox("Měřit jen ve vybraném výřezu")
         self.chk_roi.setToolTip(
             "Použije výřez vybraný v obraze (Zobrazení → Výběr oblasti).")
-        card.add(self.chk_roi)
+        advanced.add(self.chk_roi)
         self.lbl_scale = label("", "meta")
         self.lbl_scale.setWordWrap(True)
         card.add(self.lbl_scale)
@@ -521,7 +533,7 @@ class DarkFieldPanel(QWidget):
             "Na disk i do rozboru jde jen ten zprůměrovaný snímek.\n"
             "Hodnota 1 = průměrování vypnuté.")
         self.spin_stack.valueChanged.connect(self._updateStackInfo)
-        card.add(row(label("Průměrovat", "meta"), None, self.spin_stack))
+        card.add(row(label("Průměrovat snímků", "meta"), None, self.spin_stack))
         self.lbl_stack = label("", "meta")
         self.lbl_stack.setWordWrap(True)
         card.add(self.lbl_stack)
@@ -691,6 +703,9 @@ class DarkFieldPanel(QWidget):
         return self.chk_multi.isChecked()
 
     def _onMultiToggled(self, on: bool) -> None:
+        # Nastavení kanálů má smysl jen v tomhle režimu – jinak by jen
+        # prodlužovalo panel, ve kterém se stejně musí scrollovat.
+        self.channel_box.setVisible(bool(on))
         for scale, focus in self.channel_rows.values():
             scale.setEnabled(on)
             focus.setEnabled(on)
@@ -739,6 +754,17 @@ class DarkFieldPanel(QWidget):
     def wantsRoi(self) -> bool:
         return self.chk_roi.isChecked()
 
+    @staticmethod
+    def _asBool(value) -> bool:
+        """Pravdivostní hodnota i z textu.
+
+        QSettings vrací na některých platformách všechno jako řetězec a
+        ``bool("false")`` je pravda – tahle drobnost by tiše zapnula volby,
+        které si uživatel vypnul."""
+        if isinstance(value, str):
+            return value.strip().lower() in ("1", "true", "ano", "yes", "on")
+        return bool(value)
+
     def applySettings(self, data: dict) -> None:
         """Obnoví nastavení rozboru z uloženého souboru.
 
@@ -766,7 +792,7 @@ class DarkFieldPanel(QWidget):
             # a interval znamenal totéž co dnes. Ať se chová jako tehdy.
             self.spin_stack.setValue(1)
         if "align_frames" in data:
-            self.chk_align.setChecked(bool(data["align_frames"]))
+            self.chk_align.setChecked(self._asBool(data["align_frames"]))
         if "binning" in data:
             index = self.cmb_binning.findData(int(data["binning"] or 0))
             self.cmb_binning.setCurrentIndex(max(0, index))
@@ -791,11 +817,11 @@ class DarkFieldPanel(QWidget):
         if mode in (df.THRESHOLD_SIGMA, df.THRESHOLD_ABSOLUTE):
             self.seg_mode.setCurrentIndex(0 if mode == df.THRESHOLD_SIGMA else 1)
         if "store_frames" in data:
-            self.chk_store.setChecked(bool(data["store_frames"]))
+            self.chk_store.setChecked(self._asBool(data["store_frames"]))
         if "roi" in data:
             self.chk_roi.setChecked(data["roi"] is not None)
         if "multichannel" in data:
-            self.chk_multi.setChecked(bool(data["multichannel"]))
+            self.chk_multi.setChecked(self._asBool(data["multichannel"]))
         if "settle_ms" in data:
             try:
                 self.spin_settle.setValue(float(data["settle_ms"]) / 1000.0)

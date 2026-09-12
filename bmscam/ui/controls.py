@@ -4,7 +4,7 @@ from typing import Dict, Iterable
 
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QHBoxLayout,
-                             QLabel, QPushButton, QSizePolicy, QSlider,
+                             QLabel, QSizePolicy, QSlider,
                              QSpinBox, QVBoxLayout, QWidget)
 
 from ..spec import (AF_FEEDBACK_TEXT, KIND_ACTION, KIND_CHECK, KIND_COMBO,

@@ -8,7 +8,7 @@ dal upravit bez zásahů do jednotlivých oken. Odpovídá předloze
 import weakref
 
 from PyQt5.QtCore import QByteArray, QSize, Qt
-from PyQt5.QtGui import QColor, QFont, QFontDatabase, QIcon, QPainter, QPixmap
+from PyQt5.QtGui import QFont, QFontDatabase, QIcon, QPainter, QPixmap
 from PyQt5.QtSvg import QSvgRenderer
 
 # ------------------------------------------------------------------- barvy --
@@ -67,7 +67,29 @@ _icon_cache: dict = {}
 MODES = {"light": LIGHT, "dark": DARK}
 _mode = "light"
 
-globals().update(LIGHT)
+# Barvy se používají jako jména modulu (theme.BG, theme.TEXT…), protože se
+# z nich skládá stylopis i vlastní kreslení. Tady jsou vypsané, aby je viděl
+# i editor a statická kontrola; set_mode je pak přepíše z vybrané palety.
+BG = LIGHT["BG"]
+SURFACE = LIGHT["SURFACE"]
+TEXT = LIGHT["TEXT"]
+ACCENT = LIGHT["ACCENT"]
+ACCENT_600 = LIGHT["ACCENT_600"]
+ACCENT_700 = LIGHT["ACCENT_700"]
+ACCENT_100 = LIGHT["ACCENT_100"]
+ON_ACCENT = LIGHT["ON_ACCENT"]
+DIVIDER = LIGHT["DIVIDER"]
+NEUTRAL_200 = LIGHT["NEUTRAL_200"]
+NEUTRAL_300 = LIGHT["NEUTRAL_300"]
+NEUTRAL_400 = LIGHT["NEUTRAL_400"]
+NEUTRAL_500 = LIGHT["NEUTRAL_500"]
+NEUTRAL_600 = LIGHT["NEUTRAL_600"]
+NEUTRAL_700 = LIGHT["NEUTRAL_700"]
+NEUTRAL_900 = LIGHT["NEUTRAL_900"]
+STAGE_DARK = LIGHT["STAGE_DARK"]
+STAGE_LIGHT = LIGHT["STAGE_LIGHT"]
+TOOLTIP_BG = LIGHT["TOOLTIP_BG"]
+TOOLTIP_TEXT = LIGHT["TOOLTIP_TEXT"]
 
 
 def mode() -> str:

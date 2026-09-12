@@ -4,8 +4,8 @@ Modul je záměrně bez závislosti na Qt i na pyserial – dá se testovat samo
 Odpovídá sketchi ``arduino/bms_led_controller``.
 """
 
-from dataclasses import dataclass, field, replace
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Dict, List, Tuple
 
 PANELS = 4
 LEDS_PER_PANEL = 8

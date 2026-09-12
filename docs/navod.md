@@ -6,6 +6,9 @@ v [prehled.md](prehled.md); tenhle text popisuje postup práce.
 
 ---
 
+> Podrobnější manuál k samotnému měření (příprava, prahy, čtení čísel,
+> typické potíže) je v [manual.md](manual.md).
+
 ## 1. Rozvržení okna
 
 ```

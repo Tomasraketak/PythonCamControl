@@ -12,7 +12,7 @@ připojit k naměřeným datům. Modul je bez Qt, takže se dá testovat zvláš
 import json
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 #: verze formátu – roste, jen když se změní význam už zapsaných polí
 FORMAT = 2

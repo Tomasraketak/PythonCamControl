@@ -18,11 +18,19 @@ _APP = None
 
 
 def _app():
-    """Vrátí sdílenou instanci QApplication (drženou po dobu běhu testů)."""
+    """Vrátí sdílenou instanci QApplication (drženou po dobu běhu testů).
+
+    Zároveň zahodí uložený stav panelů. Aplikace si ho při zavření okna
+    ukládá do QSettings, takže bez úklidu by jeden test nastavoval podmínky
+    dalšímu – a testy by se chovaly jinak podle pořadí."""
     global _APP
+    from PyQt5.QtCore import QSettings
     from PyQt5.QtWidgets import QApplication
     if _APP is None:
         _APP = QApplication.instance() or QApplication(sys.argv[:1])
+    stored = QSettings("BMS", "CamControl")
+    stored.remove("darkfield")
+    stored.sync()            # bez sync() čte jiná instance pořád starou hodnotu
     return _APP
 
 
@@ -2584,6 +2592,78 @@ def test_live_alignment_cancels_a_shifted_slide():
     dirty = render(7, -5, extra=6, seed=3)
     found = df.analyze(dirty, bias, settings)
     assert found["particles"] == 6, found["particles"]
+
+
+def test_panel_settings_survive_a_restart():
+    """Nastavení panelu měření se uloží při zavření a načte při startu."""
+    from PyQt5.QtCore import QSettings
+
+    from bmscam.ui.main_window import MainWindow
+
+    app = _app()
+    win = MainWindow(prefer_demo=True)
+    try:
+        win.df_panel.spin_interval.setValue(9.0)
+        win.df_panel.spin_stack.setValue(2)
+        win.df_panel.spin_sigma.setValue(6.5)
+        win.df_panel.chk_store.setChecked(False)
+        win.df_panel.cmb_material.setCurrentIndex(
+            win.df_panel.cmb_material.findData("pla"))
+        win.df_panel.spin_temp.setValue(120.0)
+    finally:
+        win.close()                      # tady se stav ukládá
+    app.processEvents()
+
+    stored = QSettings("BMS", "CamControl").value("darkfield")
+    assert isinstance(stored, dict) and stored["interval_s"] == 9.0
+
+    again = MainWindow(prefer_demo=True)
+    try:
+        assert again.df_panel.spin_interval.value() == 9.0
+        assert again.df_panel.spin_stack.value() == 2
+        assert again.df_panel.spin_sigma.value() == 6.5
+        assert again.df_panel.wantsStoredFrames() is False, "vypnutá volba se zapnula"
+        assert again.df_panel.material() == "pla"
+        assert again.df_panel.temperature() == 120.0
+    finally:
+        again.close()
+    _app()                               # uklidí uložený stav pro další testy
+
+
+def test_bool_from_settings_text():
+    """QSettings umí vrátit „false“ jako text – nesmí se z toho stát pravda."""
+    from bmscam.ui.darkfield_panel import DarkFieldPanel
+
+    assert DarkFieldPanel._asBool("false") is False
+    assert DarkFieldPanel._asBool("0") is False
+    assert DarkFieldPanel._asBool("true") is True
+    assert DarkFieldPanel._asBool(True) is True
+    assert DarkFieldPanel._asBool(0) is False
+
+
+def test_collapsible_section_hides_its_body():
+    """Panel měření ukazuje jen to, co je právě potřeba."""
+    from bmscam.ui.darkfield_panel import DarkFieldPanel
+
+    _app()
+    panel = DarkFieldPanel()
+
+    # kanálové řádky se ukazují jen se zapnutým režimem
+    # (isVisibleTo, protože samotný panel v testu není zobrazený)
+    assert not panel.channel_box.isVisibleTo(panel)
+    panel.chk_multi.setChecked(True)
+    assert panel.channel_box.isVisibleTo(panel)
+    panel.chk_multi.setChecked(False)
+    assert not panel.channel_box.isVisibleTo(panel)
+
+    # rozšířené prahy jsou sbalené, dokud se nerozkliknou
+    assert not panel.spin_haze.isVisibleTo(panel)
+    advanced = panel.spin_haze.parentWidget()
+    while advanced is not None and not hasattr(advanced, "setExpanded"):
+        advanced = advanced.parentWidget()
+    assert advanced is not None, "rozšířené volby nejsou ve sbalitelném bloku"
+    advanced.setExpanded(True)
+    assert panel.spin_haze.isVisibleTo(panel)
 
 
 if __name__ == "__main__":

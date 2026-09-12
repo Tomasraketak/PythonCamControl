@@ -772,6 +772,11 @@ class FrameStore:
     def __init__(self, directory: str):
         self.directory = directory
         self.count = 0
+        #: Průběžný součet velikostí uložených snímků. Počítá se při zápisu,
+        #: protože panel se na velikost archivu ptá po každém měření – projít
+        #: kvůli tomu pokaždé celou složku by u dlouhého běhu znamenalo
+        #: kvadraticky rostoucí počet dotazů na disk.
+        self.bytes = 0
 
     @staticmethod
     def _cv2():
@@ -811,9 +816,20 @@ class FrameStore:
             path = base + ".npz"
             np.savez_compressed(path, gray=data)
         self.count += 1
+        try:
+            self.bytes += os.path.getsize(path)
+        except OSError:
+            pass
         return path
 
     def bytes_used(self) -> int:
+        """Kolik zabírají uložené snímky.
+
+        Když se počítadlo zápisů shoduje s tím, co je ve složce, vrátí se
+        průběžný součet; jinak (cizí složka, smazané soubory) se to spočítá
+        znovu z disku."""
+        if self.count and self.bytes:
+            return self.bytes
         return sum(os.path.getsize(p) for p in self.frames())
 
     def frames(self) -> List[str]:

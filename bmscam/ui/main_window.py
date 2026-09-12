@@ -1,7 +1,6 @@
 """Hlavní okno aplikace BMS Cam Control."""
 
 import glob
-import json
 import os
 import shutil
 import time
@@ -116,6 +115,7 @@ class MainWindow(QMainWindow):
             queue_mb = 0
         if queue_mb:
             self.df_panel.spin_queue.setValue(queue_mb)
+        self._restoreUiState()
         self._onQueueLimitChanged(self.df_panel.spin_queue.value())
         self.df_panel.setScaleInfo(self.view.um_per_px)
         self.refreshDevices()
@@ -1738,6 +1738,30 @@ class MainWindow(QMainWindow):
             self._updateDirLabel()
             self.refreshProfiles()
 
+    def _saveUiState(self) -> None:
+        """Uloží nastavení panelů, aby se příště spustilo tam, kde se skončilo.
+
+        Ukládá se do QSettings (tedy „jak jsem to nechal“), ne do souboru
+        s kompletním nastavením – ten zůstává pro vědomé uložení stavu
+        pracoviště."""
+        try:
+            data = self.df_panel.settings(self._darkFieldRoi()).to_dict()
+            data.pop("roi", None)          # výřez patří ke snímku, ne k panelu
+            self.settings.setValue("darkfield", data)
+        except Exception:                                  # noqa: BLE001
+            pass
+        if self.analyzer is not None:
+            try:
+                self.analyzer.saveState()
+            except Exception:                              # noqa: BLE001
+                pass
+
+    def _restoreUiState(self) -> None:
+        """Obnoví nastavení panelu měření z minulého spuštění."""
+        data = self.settings.value("darkfield")
+        if isinstance(data, dict):
+            self.df_panel.applySettings(data)
+
     def _settingsDir(self) -> str:
         """Podsložka „nastavení“ v pracovní složce; založí se, když chybí."""
         try:
@@ -2124,6 +2148,7 @@ class MainWindow(QMainWindow):
 
     # ================================================================ zavření
     def closeEvent(self, event) -> None:
+        self._saveUiState()
         self.timelapse_timer.stop()
         self.df_timer.stop()
         self.df_runner.shutdown()

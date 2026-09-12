@@ -1,6 +1,6 @@
 """Společné rozhraní všech backendů."""
 
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from ..spec import DeviceInfo, PropSpec
 

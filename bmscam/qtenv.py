@@ -93,7 +93,7 @@ def preload_opencv() -> Optional[str]:
     znamená, že je vše připravené. Aplikace běží i bez OpenCV – jen bez
     rozboru snímků a bez záznamu videa."""
     try:
-        import cv2                                        # noqa: F401
+        import cv2                       # noqa: F401 – jen kvůli načtení
     except Exception as exc:                              # noqa: BLE001
         return str(exc)
     finally:

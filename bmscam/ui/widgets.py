@@ -114,6 +114,62 @@ class Card(QFrame):
             self._lay.addLayout(widget)
 
 
+# ------------------------------------------------------------ sbalitelný blok
+class Collapsible(QWidget):
+    """Blok ovládání, který jde sbalit pod jeden řádek.
+
+    Panel měření má hodně voleb, ale většina se nastaví jednou a pak se jich
+    nikdo nedotkne. Sbalené bloky zkracují panel na to, co se používá denně,
+    a zbytek nechají na jedno kliknutí."""
+
+    def __init__(self, title: str, expanded: bool = False, parent=None):
+        super().__init__(parent)
+        self._title = title
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(theme.SPACE_1)
+
+        self.button = QPushButton()
+        self.button.setCheckable(True)
+        self.button.setChecked(expanded)
+        self.button.setCursor(Qt.PointingHandCursor)
+        self.button.toggled.connect(self._onToggled)
+        lay.addWidget(self.button)
+
+        self.body = QWidget()
+        self.body_layout = QVBoxLayout(self.body)
+        self.body_layout.setContentsMargins(0, 0, 0, theme.SPACE_1)
+        self.body_layout.setSpacing(theme.SPACE_2)
+        lay.addWidget(self.body)
+
+        self._applyTheme()
+        theme.on_change(self._applyTheme)
+        self._onToggled(expanded)
+
+    def add(self, item) -> None:
+        if isinstance(item, QWidget):
+            self.body_layout.addWidget(item)
+        else:
+            self.body_layout.addLayout(item)
+
+    def setExpanded(self, expanded: bool) -> None:
+        self.button.setChecked(bool(expanded))
+
+    def isExpanded(self) -> bool:
+        return self.button.isChecked()
+
+    def _onToggled(self, expanded: bool) -> None:
+        self.body.setVisible(expanded)
+        self.button.setText(("▾  " if expanded else "▸  ") + self._title.upper())
+
+    def _applyTheme(self) -> None:
+        self.button.setStyleSheet(
+            f"QPushButton {{ border:none; border-top:1px solid {theme.DIVIDER};"
+            f"padding:6px 0; text-align:left; font-size:11px; font-weight:600;"
+            f"letter-spacing:1px; color:{theme.NEUTRAL_700}; }}"
+            f"QPushButton:hover {{ color:{theme.ACCENT}; }}")
+
+
 # --------------------------------------------------------------- štítek stavu
 class Tag(QLabel):
     """Obrysový štítek – „Nepřipojeno" / „Připojeno"."""

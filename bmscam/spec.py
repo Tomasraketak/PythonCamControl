@@ -4,7 +4,7 @@ Jednotlivé backendy (uvcham / toupcam / demo) hlásí, které z těchto klíč�
 skutečně podporují; GUI se pak sestaví jen z dostupných prvků.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Sequence
 
 # ---------------------------------------------------------------- skupiny ---

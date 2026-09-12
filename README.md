@@ -4,7 +4,8 @@ Ovládací program s grafickým rozhraním pro mikroskopovou kameru
 **BMS Microscopes RJ45 8MP 4K UHD Multioutput HDMI**, postavený nad
 originálním SDK `uvcham` (verze 1.29030.20250722).
 
-**Jak s programem pracovat, krok za krokem: [docs/navod.md](docs/navod.md).**
+**Jak s programem pracovat: [docs/manual.md](docs/manual.md)** (podrobný manuál
+k měření) nebo [docs/navod.md](docs/navod.md) (rychlejší průvodce obsluhou).
 Podrobný soupis ovládacích prvků a jejich konstant v SDK je v [docs/prehled.md](docs/prehled.md).
 
 Rozhraní vychází z návrhového systému **Modernist** – ostré tvary bez zaoblení,
@@ -346,6 +347,7 @@ bmscam/
         darkfield_worker.py   rozbor temného pole ve vlastním vlákně
 arduino/bms_led_controller/   sketch pro Arduino Mega (FastLED)
 tests/test_smoke.py           testy bez hardwaru
+docs/manual.md                podrobný manuál k měření (příprava → vyhodnocení)
 docs/navod.md                 návod k obsluze krok za krokem
 docs/zapojeni_led.md          zapojení osvětlení a popis protokolu
 docs/darkfield.md             postup měření kontaminace v temném poli
